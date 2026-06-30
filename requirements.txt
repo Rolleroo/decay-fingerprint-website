@@ -1,0 +1,4 @@
+radioactivedecay
+streamlit
+plotly
+pytest
