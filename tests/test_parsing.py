@@ -1,3 +1,5 @@
+import pytest
+
 from app.parsing import parse_paste
 
 
@@ -144,3 +146,54 @@ def test_nan_and_inf_rejected():
     result = parse_paste("Cs-137, nan\nCo-60, inf")
     assert not result.ok
     assert len(result.errors) == 2
+
+
+# --- optional uncertainty field (reverse-mode input; forward ignores it) ---
+
+
+def test_no_uncertainty_field_leaves_uncertainty_none():
+    result = parse_paste("Cs-137, 10")
+    assert result.ok
+    assert result.entries[0].uncertainty is None
+
+
+def test_percent_uncertainty_stored_as_relative_fraction():
+    result = parse_paste("Cs-137, 1000, 5%")
+    assert result.ok, result.errors
+    e = result.entries[0]
+    assert e.value == 1000.0
+    assert e.uncertainty == pytest.approx(0.05)
+    assert e.uncertainty_is_relative
+
+
+def test_absolute_uncertainty_via_comma_plusminus_and_space():
+    for line in ["Cs-137, 1000, 50", "Cs-137, 1000 ± 50", "Cs-137, 1000 +- 50", "Cs-137 1000 50"]:
+        result = parse_paste(line)
+        assert result.ok, (line, result.errors)
+        e = result.entries[0]
+        assert (e.value, e.uncertainty, e.uncertainty_is_relative) == (1000.0, 50.0, False), line
+
+
+def test_tab_separated_third_column_is_uncertainty():
+    result = parse_paste("Cs-137\t1000\t5%")
+    assert result.ok, result.errors
+    assert result.entries[0].uncertainty == pytest.approx(0.05)
+
+
+def test_thousands_separator_is_flagged_not_misread_as_uncertainty():
+    # "1,000" must never silently become value=1 with uncertainty=0.
+    result = parse_paste("Cs-137, 1,000")
+    assert not result.ok
+    assert "thousands" in result.errors[0].message.lower()
+
+
+def test_negative_or_nonnumeric_uncertainty_rejected():
+    result = parse_paste("Cs-137, 1000, -5\nCo-60, 10, abc")
+    assert not result.ok
+    assert len(result.errors) == 2
+
+
+def test_more_than_two_numeric_fields_is_an_error():
+    result = parse_paste("Cs-137, 1, 2, 3")
+    assert not result.ok
+    assert "Too many fields" in result.errors[0].message

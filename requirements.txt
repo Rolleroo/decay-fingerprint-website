@@ -1,4 +1,7 @@
 radioactivedecay
 streamlit
 plotly
+numpy
+scipy
+mpmath
 pytest
