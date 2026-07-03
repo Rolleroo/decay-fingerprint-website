@@ -1,3 +1,17 @@
+---
+title: Rad Decay Tool
+emoji: ☢️
+colorFrom: blue
+colorTo: gray
+sdk: streamlit
+app_file: app.py
+pinned: false
+---
+
+<!-- The YAML block above configures a Hugging Face Space (Streamlit SDK,
+     entry point app.py). It is metadata for HF only; it does not affect
+     GitHub or the app itself. -->
+
 # Decay Fingerprint Tool
 
 A Streamlit app that takes a pasted list of nuclides + amounts (a
