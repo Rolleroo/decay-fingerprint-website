@@ -440,17 +440,22 @@ def solve_age_from_entries(
     default_rel_sigma: float = 0.05,
     n_trials: int = DEFAULT_TRIALS,
     seed: int | None = None,
+    coverage_k: float = 1.0,
 ) -> AgeResult:
     """UI-facing convenience: derive sigmas from the parsed lines. t=0
     lines default to exact (0%) -- a known reference, not a measurement --
-    while present-day lines default to ``default_rel_sigma``."""
+    while present-day lines default to ``default_rel_sigma``. ``coverage_k``
+    is the coverage factor of the pasted uncertainties on both sides."""
     _guard_canon(canon_t0, "t=0")
     _guard_canon(canon_today, "present-day")
     atoms_t0 = measured_atoms_from_canon(canon_t0)
     atoms_today = measured_atoms_from_canon(canon_today)
-    sig_t0 = sigma_atoms_from_entries(entries_t0, canon_t0, atoms_t0, default_rel_sigma=0.0)
+    sig_t0 = sigma_atoms_from_entries(
+        entries_t0, canon_t0, atoms_t0, default_rel_sigma=0.0, coverage_k=coverage_k
+    )
     sig_today = sigma_atoms_from_entries(
-        entries_today, canon_today, atoms_today, default_rel_sigma=default_rel_sigma
+        entries_today, canon_today, atoms_today,
+        default_rel_sigma=default_rel_sigma, coverage_k=coverage_k,
     )
     return solve_age(
         canon_t0,

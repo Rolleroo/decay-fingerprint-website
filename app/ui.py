@@ -1,8 +1,10 @@
 """Streamlit front end. All physics/parsing/conversion logic lives in
-parsing.py, conversions.py, engine.py, and reverse.py (spec Sec 7) -- this
-module only wires widgets to those modules and renders the results.
+parsing.py, conversions.py, engine.py, reverse.py, age_solve.py, plus the
+ingest.py / dates.py helpers -- this module only wires widgets to those
+modules and renders the results.
 
-Three tabs share one interface style (paste a fingerprint, pick a unit):
+Three tabs share one interface style (paste OR upload a fingerprint, pick a
+unit; give a time as an interval OR a pair of dates):
 
 - Forward decay: single time point; table of the decayed composition.
 - Reverse (Mode B): known age; reconstruct the t=0 composition with Monte
@@ -10,18 +12,26 @@ Three tabs share one interface style (paste a fingerprint, pick a unit):
   forward-check overlay.
 - Age (Mode A): known t=0 composition; solve for the age by weighted
   least squares against the forward engine (docs/mode-a-addendum.md).
+
+Shared input conveniences (added 2026-07-03): CSV/XLSX upload alongside the
+paste box (app.ingest), date-mode time entry (app.dates), a coverage-factor
+selector for the uncertainty convention (1σ/2σ/95%), and CSV/JSON download
+buttons on every results table.
 """
 
 from __future__ import annotations
 
 import math
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 
 from app.age_solve import age_readable, solve_age_from_entries
 from app.conversions import UNIT_GROUPS, ValidationError, canonicalize, scale_to_display
+from app.dates import DateError, date_from_age, forward_interval_seconds
 from app.engine import filter_nuclides_by_half_life, half_life_readable, run_time_series
+from app.ingest import IngestError, paste_text_from_upload
 from app.parsing import parse_paste
 from app.reverse import atoms_to_display, reconstruct_from_entries
 
@@ -33,8 +43,129 @@ TIME_UNIT_TO_SECONDS = {
     "years": 86400.0 * 365.25,
 }
 
+# Coverage factor of user-supplied uncertainties (see sigma_atoms_from_entries).
+# Lab certificates quote at varying k; picking the right one keeps the MC
+# intervals correctly scaled. The default seed uncertainty is always 1-sigma.
+SIGMA_CONVENTIONS: dict[str, float] = {
+    "1σ / standard uncertainty (68%)": 1.0,
+    "2σ (95%)": 2.0,
+    "95% confidence (k = 1.96)": 1.96,
+    "3σ (99.7%)": 3.0,
+}
+
+UPLOAD_TYPES = ["csv", "tsv", "txt", "dat", "xlsx", "xlsm", "xls"]
+
 PLACEHOLDER_PASTE = "Cs-137, 3.7e9\nCo-60, 1.2e8\nSr-90, 5.0e7\nMo-99, 2.0e6"
 PLACEHOLDER_PASTE_REVERSE = "Cs-137, 3.7e9, 5%\nSr-90, 5.0e7 ± 2e6\nAm-241, 3.1e5"
+
+
+def _input_text(
+    key_prefix: str, label: str, placeholder: str, height: int, help_text: str | None = None
+) -> str:
+    """A paste box plus an optional CSV/XLSX uploader. When a file is present
+    it is converted to the same paste text (via app.ingest) and used instead
+    of the box, with the auto-detected column mapping shown so the choice is
+    never silent. Falls back to the paste box on any read error."""
+    paste_text = st.text_area(
+        label, height=height, placeholder=placeholder, key=f"{key_prefix}_paste", help=help_text
+    )
+    uploaded = st.file_uploader(
+        "…or upload a results table (CSV / XLSX)",
+        type=UPLOAD_TYPES,
+        key=f"{key_prefix}_file",
+        help=(
+            "Gamma-spec / spreadsheet exports: the nuclide, value, and optional "
+            "uncertainty columns are auto-detected. Non-UTF-8 encodings, ';' "
+            "delimiters, decimal commas, and metadata preamble rows are handled."
+        ),
+    )
+    if uploaded is not None:
+        try:
+            text, mapping = paste_text_from_upload(uploaded.name, uploaded.getvalue())
+        except IngestError as exc:
+            st.error(f"Could not read {uploaded.name}: {exc}")
+            return paste_text
+        unc = mapping.uncertainty or "—"
+        pct = " (as %)" if mapping.uncertainty_is_percent else ""
+        st.caption(
+            f"📄 Using **{uploaded.name}** — detected columns: nuclide = **{mapping.nuclide}**, "
+            f"value = **{mapping.value}**, uncertainty = **{unc}**{pct}. Remove the file to use "
+            f"the paste box instead."
+        )
+        return text
+    return paste_text
+
+
+def _sigma_convention_selector(key_prefix: str) -> float:
+    label = st.selectbox(
+        "Uncertainties are quoted at",
+        list(SIGMA_CONVENTIONS),
+        index=0,
+        key=f"{key_prefix}_sigma_conv",
+        help=(
+            "Coverage factor of the pasted/uploaded uncertainties. Lab certificates "
+            "often quote 2σ or 95% (k ≈ 2); selecting the right one keeps the Monte "
+            "Carlo intervals correctly scaled. The default seed uncertainty is always 1σ."
+        ),
+    )
+    return SIGMA_CONVENTIONS[label]
+
+
+def _download_buttons(df: pd.DataFrame, basename: str, key_prefix: str) -> None:
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "Download CSV",
+        df.to_csv(index=False).encode("utf-8"),
+        file_name=f"{basename}.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_dl_csv",
+    )
+    c2.download_button(
+        "Download JSON",
+        df.to_json(orient="records", indent=2).encode("utf-8"),
+        file_name=f"{basename}.json",
+        mime="application/json",
+        key=f"{key_prefix}_dl_json",
+    )
+
+
+def _interval_input(
+    key_prefix: str,
+    *,
+    elapsed_label: str,
+    reference_label: str,
+    target_label: str,
+    default_unit_index: int = 4,
+) -> tuple[float | None, str, str | None]:
+    """Render either an elapsed-interval input or a by-dates input and return
+    (seconds, human label, error message). Professionals work from reference
+    dates; the elapsed path is the original behaviour. Returns seconds=None
+    with an error message when the two dates are the wrong way round."""
+    mode = st.radio(
+        "Specify time as", ["Elapsed interval", "By date"], horizontal=True, key=f"{key_prefix}_timemode"
+    )
+    if mode == "Elapsed interval":
+        c1, c2 = st.columns(2)
+        with c1:
+            value = st.number_input(elapsed_label, min_value=0.0, value=1.0, key=f"{key_prefix}_tv")
+        with c2:
+            unit = st.selectbox(
+                "Time unit", list(TIME_UNIT_TO_SECONDS), index=default_unit_index, key=f"{key_prefix}_tu"
+            )
+        return value * TIME_UNIT_TO_SECONDS[unit], f"{value:g} {unit}", None
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ref = st.date_input(
+            reference_label, value=date.today() - timedelta(days=365), key=f"{key_prefix}_refdate", format="YYYY-MM-DD"
+        )
+    with c2:
+        tgt = st.date_input(target_label, value=date.today(), key=f"{key_prefix}_tgtdate", format="YYYY-MM-DD")
+    try:
+        seconds = forward_interval_seconds(ref, tgt, what=target_label.lower())
+    except DateError as exc:
+        return None, "", str(exc)
+    return seconds, f"{ref.isoformat()} → {tgt.isoformat()}", None
 
 
 def _base_unit_and_series(kind: str, library_unit: str, result):
@@ -118,20 +249,21 @@ def _show_parse_errors(parse_result) -> None:
 
 def _forward_tab() -> None:
     st.subheader("Input")
-    paste_text = st.text_area(
+    paste_text = _input_text(
+        "fwd",
         "Paste 'nuclide, value' lines (one per line)",
+        PLACEHOLDER_PASTE,
         height=200,
-        placeholder=PLACEHOLDER_PASTE,
-        key="fwd_paste",
     )
 
     unit_choice, frac_as_percent = _unit_picker("fwd")
 
-    time_col, unit_col = st.columns(2)
-    with time_col:
-        time_value = st.number_input("Decay to", min_value=0.0, value=1.0)
-    with unit_col:
-        time_unit = st.selectbox("Time unit", list(TIME_UNIT_TO_SECONDS), index=4)  # years
+    target_time_s, time_label, time_error = _interval_input(
+        "fwd",
+        elapsed_label="Decay to",
+        reference_label="Reference date (of the pasted values)",
+        target_label="Decay to date",
+    )
 
     run = st.button("Decay", type="primary", key="fwd_run")
 
@@ -140,6 +272,8 @@ def _forward_tab() -> None:
     # interaction) sees run=False. Stash the computed result in
     # session_state so the table stays in place across those reruns.
     if run:
+        if time_error:
+            st.error(time_error)
         parse_result = parse_paste(paste_text)
         if parse_result.errors:
             _show_parse_errors(parse_result)
@@ -147,7 +281,7 @@ def _forward_tab() -> None:
         if not parse_result.entries:
             if not parse_result.errors:
                 st.info("Paste at least one 'nuclide, value' line.")
-        else:
+        elif time_error is None:
             try:
                 canon = canonicalize(parse_result.entries, unit_choice, frac_as_percent=frac_as_percent)
             except ValidationError as exc:
@@ -155,16 +289,16 @@ def _forward_tab() -> None:
                 canon = None
 
             if canon is not None:
-                target_time_s = time_value * TIME_UNIT_TO_SECONDS[time_unit]
                 st.session_state["canon"] = canon
                 st.session_state["target_time_s"] = target_time_s
+                st.session_state["fwd_time_label"] = time_label
                 st.session_state["result"] = run_time_series(canon, [target_time_s])
 
     if "result" in st.session_state:
         canon = st.session_state["canon"]
         result = st.session_state["result"]
 
-        st.subheader(f"Fingerprint after {time_value:g} {time_unit}")
+        st.subheader(f"Fingerprint after {st.session_state.get('fwd_time_label', '')}")
 
         apply_filter = st.checkbox("Filter out short-lived nuclides", value=False)
         filter_col, filter_unit_col = st.columns(2)
@@ -187,6 +321,7 @@ def _forward_tab() -> None:
 
         table = _results_table(canon, result, kept_nuclides)
         st.dataframe(table, use_container_width=True, hide_index=True)
+        _download_buttons(table, "forward_fingerprint", "fwd")
 
         with st.expander("Copy table for Excel"):
             st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
@@ -304,12 +439,12 @@ def _reverse_tab() -> None:
     )
 
     st.subheader("Input")
-    paste_text = st.text_area(
+    paste_text = _input_text(
+        "rev",
         "Paste 'nuclide, value[, uncertainty]' lines (one per line)",
+        PLACEHOLDER_PASTE_REVERSE,
         height=200,
-        placeholder=PLACEHOLDER_PASTE_REVERSE,
-        key="rev_paste",
-        help=(
+        help_text=(
             "The uncertainty column is optional: absolute in the same unit "
             "('Cs-137, 3.7e9, 1e8' or '3.7e9 ± 1e8') or relative ('3.7e9, 5%'). "
             "Lines without one get the default from Advanced options."
@@ -318,11 +453,12 @@ def _reverse_tab() -> None:
 
     unit_choice, frac_as_percent = _unit_picker("rev")
 
-    age_col, age_unit_col = st.columns(2)
-    with age_col:
-        age_value = st.number_input("Known age", min_value=0.0, value=1.0, key="rev_age")
-    with age_unit_col:
-        age_unit = st.selectbox("Age unit", list(TIME_UNIT_TO_SECONDS), index=4, key="rev_age_unit")
+    age_s, age_label, age_error = _interval_input(
+        "rev",
+        elapsed_label="Known age",
+        reference_label="Origin / manufacture date",
+        target_label="Measurement date",
+    )
 
     with st.expander("Advanced (Monte Carlo settings)"):
         n_trials = int(
@@ -342,6 +478,7 @@ def _reverse_tab() -> None:
             value=5.0,
             help="An assumed seed value so MC runs out of the box — override per line with real measurement precision.",
         )
+        coverage_k = _sigma_convention_selector("rev")
 
     closed_system = st.checkbox(
         "I understand these results assume a **closed system**: nothing was added to or "
@@ -359,8 +496,9 @@ def _reverse_tab() -> None:
         if parse_result.errors:
             _show_parse_errors(parse_result)
 
-        age_s = age_value * TIME_UNIT_TO_SECONDS[age_unit]
-        if age_s <= 0:
+        if age_error:
+            st.error(age_error)
+        elif age_s is None or age_s <= 0:
             st.error("The known age must be greater than zero.")
         elif not parse_result.entries:
             if not parse_result.errors:
@@ -380,16 +518,17 @@ def _reverse_tab() -> None:
                         age_s,
                         default_rel_sigma=default_sigma_pct / 100.0,
                         n_trials=n_trials,
+                        coverage_k=coverage_k,
                     )
                 st.session_state["rev_canon"] = canon
                 st.session_state["rev_result"] = rev_result
-                st.session_state["rev_age_label"] = f"{age_value:g} {age_unit}"
+                st.session_state["rev_age_label"] = age_label
 
     if "rev_result" in st.session_state:
         canon = st.session_state["rev_canon"]
         result = st.session_state["rev_result"]
 
-        st.subheader(f"Reconstructed composition {st.session_state['rev_age_label']} ago")
+        st.subheader(f"Reconstructed composition — reach-back {st.session_state['rev_age_label']}")
 
         # Forward-check verdict first: it overrides everything else.
         if result.forward_check_ok:
@@ -417,6 +556,7 @@ def _reverse_tab() -> None:
             st.info("Nothing to reconstruct (no radioactive nuclides in the input).")
             return
         st.dataframe(table, use_container_width=True, hide_index=True)
+        _download_buttons(table, "reconstructed_t0", "rev")
         st.caption(
             (
                 f"{result.n_trials:,} Monte Carlo trials; values are medians with 95% intervals."
@@ -481,22 +621,30 @@ def _age_tab() -> None:
     )
 
     st.subheader("Known composition at t=0")
-    t0_text = st.text_area(
+    t0_text = _input_text(
+        "age_t0",
         "Paste 'nuclide, value[, uncertainty]' lines — lines without an uncertainty are treated as exact",
+        "Pu-241, 1.0e15\nAm-241, 2.0e13",
         height=150,
-        placeholder="Pu-241, 1.0e15\nAm-241, 2.0e13",
-        key="age_t0_paste",
     )
     t0_unit, _ = _unit_picker("age_t0")
 
     st.subheader("Measured composition today")
-    today_text = st.text_area(
+    today_text = _input_text(
+        "age_today",
         "Paste 'nuclide, value[, uncertainty]' lines — lines without one get the default uncertainty",
+        "Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
         height=150,
-        placeholder="Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
-        key="age_today_paste",
     )
     today_unit, _ = _unit_picker("age_today")
+
+    measurement_date = None
+    if st.checkbox(
+        "I have a measurement date (show the implied origin/production date)", key="age_use_date"
+    ):
+        measurement_date = st.date_input(
+            "Measurement date", value=date.today(), key="age_meas_date", format="YYYY-MM-DD"
+        )
 
     with st.expander("Advanced (Monte Carlo settings)"):
         n_trials = int(
@@ -517,6 +665,7 @@ def _age_tab() -> None:
             value=5.0,
             key="age_sigma",
         )
+        coverage_k = _sigma_convention_selector("age")
 
     closed_system = st.checkbox(
         "I understand the solved age assumes a **closed system** and that the t=0 "
@@ -553,12 +702,16 @@ def _age_tab() -> None:
                         canon_today,
                         default_rel_sigma=default_sigma_pct / 100.0,
                         n_trials=n_trials,
+                        coverage_k=coverage_k,
                     )
             except ValidationError as exc:
                 st.error(str(exc))
             else:
                 st.session_state["age_result"] = result
                 st.session_state["age_canon_today"] = canon_today
+                st.session_state["age_measurement_date"] = (
+                    measurement_date.isoformat() if measurement_date is not None else None
+                )
 
     if "age_result" in st.session_state:
         result = st.session_state["age_result"]
@@ -584,6 +737,17 @@ def _age_tab() -> None:
                 )
                 + f" Fit quality chi²/dof = {result.chi2_per_dof:.3g}."
             )
+            meas_iso = st.session_state.get("age_measurement_date")
+            if meas_iso and result.resolvable and math.isfinite(result.age_s_median):
+                meas = date.fromisoformat(meas_iso)
+                origin = date_from_age(meas, result.age_s_median)
+                lo = date_from_age(meas, result.age_s_hi)  # older age -> earlier date
+                hi = date_from_age(meas, result.age_s_lo)
+                st.info(
+                    f"**Implied origin date:** {origin.isoformat()} "
+                    f"(95% range {lo.isoformat()} – {hi.isoformat()}), "
+                    f"measured on {meas.isoformat()}."
+                )
         if result.ambiguous_ages_s:
             st.warning(
                 "**Ambiguous:** these ages fit comparably — "
@@ -601,7 +765,9 @@ def _age_tab() -> None:
                 st.warning(w)
 
         st.markdown("**Forward check at the solved age** (known t=0 decayed forward, vs measured):")
-        st.dataframe(_age_results_table(canon_today, result), use_container_width=True, hide_index=True)
+        age_table = _age_results_table(canon_today, result)
+        st.dataframe(age_table, use_container_width=True, hide_index=True)
+        _download_buttons(age_table, "age_forward_check", "age")
 
 
 def main() -> None:
@@ -677,7 +843,22 @@ def main() -> None:
             "resolvable, when two ages fit equally well, or when the inputs are "
             "inconsistent with closed-system decay.\n\n"
             "**Copy table for Excel** — open that section and click the copy icon to "
-            "grab the results as tab-separated text ready to paste into a spreadsheet."
+            "grab the results as tab-separated text ready to paste into a spreadsheet.\n\n"
+            "**Shared conveniences (all tabs):**\n"
+            "- **Upload instead of paste** — drop a CSV or XLSX results table "
+            "(e.g. a gamma-spec export); the nuclide, value, and uncertainty columns "
+            "are auto-detected and shown. Non-UTF-8 encodings, `;` delimiters, decimal "
+            "commas, and metadata preamble rows are handled.\n"
+            "- **By date** — instead of an elapsed interval, give a reference date and a "
+            "target/measurement date; the interval is computed for you. On the Age tab, "
+            "supplying a measurement date converts the solved age into an implied "
+            "origin/production date.\n"
+            "- **Uncertainty convention** — tell the tool whether pasted/uploaded "
+            "uncertainties are 1σ, 2σ, or 95% (k ≈ 2) so the Monte Carlo intervals are "
+            "scaled correctly (Advanced options, reverse and age tabs).\n"
+            "- **Download** — every results table has CSV and JSON download buttons.\n\n"
+            "**Units** — activity (Bq…TBq, dpm, Ci…pCi), specific activity (Bq/g, Bq/kg), "
+            "mass (g…t incl. µg), amount (mol, atoms), and relative fraction/percent."
         )
 
     st.markdown(

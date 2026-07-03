@@ -52,14 +52,20 @@ UNIT_MAP: dict[str, tuple[str | None, str]] = {
     "kBq": ("kBq", "activity"),
     "MBq": ("MBq", "activity"),
     "GBq": ("GBq", "activity"),
+    "TBq": ("TBq", "activity"),
+    "dpm": ("dpm", "activity"),  # disintegrations per minute, common on wipe/swab reports
     "Ci": ("Ci", "activity"),
     "mCi": ("mCi", "activity"),
     "µCi": ("uCi", "activity"),
+    "nCi": ("nCi", "activity"),
+    "pCi": ("pCi", "activity"),
     "Bq/g": ("Bq", "specific_activity"),
     "Bq/kg": ("Bq", "specific_activity"),
     "g": ("g", "mass"),
     "kg": ("kg", "mass"),
     "mg": ("mg", "mass"),
+    "µg": ("ug", "mass"),
+    "t": ("t", "mass"),  # tonne
     "mol": ("mol", "amount"),
     "atoms": ("num", "amount"),
     "activity fraction": (None, "fraction_activity"),
@@ -69,9 +75,9 @@ UNIT_MAP: dict[str, tuple[str | None, str]] = {
 
 # Grouped purely for populating the UI dropdown in the order spec Sec 2 lists.
 UNIT_GROUPS: list[tuple[str, list[str]]] = [
-    ("Activity", ["Bq", "kBq", "MBq", "GBq", "Ci", "mCi", "µCi"]),
+    ("Activity", ["Bq", "kBq", "MBq", "GBq", "TBq", "dpm", "Ci", "mCi", "µCi", "nCi", "pCi"]),
     ("Specific activity", ["Bq/g", "Bq/kg"]),
-    ("Mass", ["g", "kg", "mg"]),
+    ("Mass", ["g", "kg", "mg", "µg", "t"]),
     ("Amount", ["mol", "atoms"]),
     ("Relative", ["activity fraction", "mass fraction", "mole fraction"]),
 ]
@@ -158,13 +164,21 @@ def scale_to_display(value: float, base_unit: str, display_unit: str) -> float:
     scaling"), since the per-nuclide physics already happened inside the
     engine. Atom counts ('num') and fraction/percent values pass straight
     through unscaled.
+
+    ``display_unit`` is the user-facing dropdown label, which is not always
+    the library's own unit string: the micro-sign labels 'µCi' and 'µg'
+    (U+00B5) must map to the library's 'uCi'/'ug', or the converter rejects
+    them. Resolve the label to its library unit via ``UNIT_MAP`` first;
+    labels already equal to a library unit (or library units passed
+    directly, e.g. in tests) fall through unchanged.
     """
-    if base_unit == display_unit:
+    lib_display = UNIT_MAP.get(display_unit, (None, None))[0] or display_unit
+    if base_unit == lib_display:
         return value
     if base_unit in _unit_converter.activity_units:
-        return _unit_converter.activity_unit_conv(value, base_unit, display_unit)
+        return _unit_converter.activity_unit_conv(value, base_unit, lib_display)
     if base_unit in _unit_converter.mass_units:
-        return _unit_converter.mass_unit_conv(value, base_unit, display_unit)
+        return _unit_converter.mass_unit_conv(value, base_unit, lib_display)
     if base_unit in _unit_converter.moles_units:
-        return _unit_converter.moles_unit_conv(value, base_unit, display_unit)
+        return _unit_converter.moles_unit_conv(value, base_unit, lib_display)
     return value

@@ -266,13 +266,22 @@ def sigma_atoms_from_entries(
     canon: CanonResult,
     atoms: dict[str, float],
     default_rel_sigma: float = DEFAULT_REL_SIGMA,
+    coverage_k: float = 1.0,
 ) -> dict[str, float]:
     """Per-nuclide 1-sigma uncertainty in atoms.
 
     Relative uncertainties (and the seeded default) scale the atom count
     directly; absolute ones are converted through the same unit path as
     the value itself, so the sigma is expressed in exactly the same basis.
+
+    ``coverage_k`` is the coverage factor of the *user-supplied*
+    uncertainties: a value stated at k-sigma / a coverage factor k (e.g.
+    2 for "2 sigma", 1.96 for "95%") is divided by k to recover the
+    1-sigma value the Monte Carlo needs. It never touches the seeded
+    default, which is defined as 1-sigma by construction.
     """
+    if coverage_k <= 0:
+        raise ValueError("Coverage factor k must be positive.")
     total_raw = sum(e.value for e in entries)
     sigmas: dict[str, float] = {}
     for e in entries:
@@ -282,16 +291,16 @@ def sigma_atoms_from_entries(
         if e.uncertainty is None:
             sigmas[n] = default_rel_sigma * atoms[n]
         elif e.uncertainty_is_relative:
-            sigmas[n] = e.uncertainty * atoms[n]
+            sigmas[n] = (e.uncertainty / coverage_k) * atoms[n]
         elif e.value > 0:
-            sigmas[n] = e.uncertainty * (atoms[n] / e.value)
+            sigmas[n] = (e.uncertainty / coverage_k) * (atoms[n] / e.value)
         else:
             # Value is zero (e.g. below detection limit with a quoted
             # bound): derive atoms-per-pasted-unit from the library.
             per_unit = float(rd.Inventory({n: 1.0}, canon.library_unit).numbers()[n])
             if canon.kind.startswith("fraction_") and total_raw > 0:
                 per_unit /= total_raw
-            sigmas[n] = e.uncertainty * per_unit
+            sigmas[n] = (e.uncertainty / coverage_k) * per_unit
     return sigmas
 
 
@@ -653,14 +662,20 @@ def reconstruct_from_entries(
     default_rel_sigma: float = DEFAULT_REL_SIGMA,
     n_trials: int = DEFAULT_TRIALS,
     seed: int | None = None,
+    coverage_k: float = 1.0,
 ) -> ReverseResult:
     """UI-facing convenience: derive per-nuclide sigmas from the parsed
     lines (stable nuclides skipped before any unit conversion, since a
-    stable nuclide has no activity) and run the Mode B reconstruction."""
+    stable nuclide has no activity) and run the Mode B reconstruction.
+
+    ``coverage_k`` is the coverage factor of the pasted uncertainties
+    (see ``sigma_atoms_from_entries``)."""
     radioactive = {n: v for n, v in canon.contents.items() if not is_stable(n)}
     canon_radioactive = dataclasses.replace(canon, contents=radioactive)
     atoms = measured_atoms_from_canon(canon_radioactive)
-    sigma = sigma_atoms_from_entries(entries, canon_radioactive, atoms, default_rel_sigma)
+    sigma = sigma_atoms_from_entries(
+        entries, canon_radioactive, atoms, default_rel_sigma, coverage_k=coverage_k
+    )
     return reconstruct_t0(
         canon,
         age_s,

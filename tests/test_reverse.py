@@ -235,6 +235,35 @@ def test_mc_interval_scales_with_stated_measurement_uncertainty():
     assert r.conditioning == "pass"
 
 
+def test_coverage_factor_divides_user_uncertainty_not_the_default():
+    # A value stated at 2 sigma must yield half the 1-sigma the MC uses;
+    # the seeded default (a 1-sigma assumption) must be untouched by k.
+    parse = parse_paste("Cs-137, 1000, 10%\nCo-60, 500")  # Co-60 has no uncertainty
+    assert parse.ok
+    canon = canonicalize(parse.entries, "Bq")
+    from app.reverse import measured_atoms_from_canon
+
+    atoms = measured_atoms_from_canon(canon)
+    sig_1 = sigma_atoms_from_entries(parse.entries, canon, atoms, default_rel_sigma=0.05)
+    sig_2 = sigma_atoms_from_entries(
+        parse.entries, canon, atoms, default_rel_sigma=0.05, coverage_k=2.0
+    )
+    # User-supplied (Cs-137): halved by k=2.
+    assert sig_2["Cs-137"] == pytest.approx(sig_1["Cs-137"] / 2.0)
+    # Defaulted (Co-60): identical -- k does not touch the seeded 1-sigma.
+    assert sig_2["Co-60"] == pytest.approx(sig_1["Co-60"])
+
+
+def test_coverage_factor_rejects_nonpositive_k():
+    parse = parse_paste("Cs-137, 1000, 5%")
+    canon = canonicalize(parse.entries, "Bq")
+    from app.reverse import measured_atoms_from_canon
+
+    atoms = measured_atoms_from_canon(canon)
+    with pytest.raises(ValueError):
+        sigma_atoms_from_entries(parse.entries, canon, atoms, coverage_k=0.0)
+
+
 def test_absolute_and_relative_uncertainty_forms_agree():
     absolute = parse_paste("Cs-137, 1000 ± 50")
     relative = parse_paste("Cs-137, 1000, 5%")

@@ -4,4 +4,6 @@ plotly
 numpy
 scipy
 mpmath
+pandas
+openpyxl
 pytest

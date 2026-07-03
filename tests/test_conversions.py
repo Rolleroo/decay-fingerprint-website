@@ -153,3 +153,37 @@ def test_scale_to_display_known_anchor():
 def test_scale_to_display_passes_through_atoms_and_fractions_unscaled():
     assert scale_to_display(42.0, "num", "num") == 42.0
     assert scale_to_display(0.5, "fraction", "fraction") == 0.5
+
+
+# --- professional units added 2026-07-03 (dpm, TBq, nCi, pCi, ug, tonne) ---
+
+
+def test_dpm_input_is_one_sixtieth_of_bq_per_second():
+    # 1 dpm = 1 disintegration/min = 1/60 Bq.
+    canon = canonicalize(entries_of("Co-60, 60"), "dpm")
+    inv = rd.Inventory(canon.contents, units=canon.library_unit)
+    assert inv.activities("Bq")["Co-60"] == pytest.approx(1.0, rel=1e-9)
+
+
+def test_new_activity_units_round_trip_through_bq():
+    for label, value in [("TBq", 2.0), ("nCi", 500.0), ("pCi", 1e4), ("dpm", 12345.0)]:
+        canon = canonicalize(entries_of(f"Cs-137, {value}"), label)
+        inv = rd.Inventory(canon.contents, units=canon.library_unit)
+        bq = inv.activities("Bq")["Cs-137"]
+        assert scale_to_display(bq, "Bq", label) == pytest.approx(value, rel=1e-9)
+
+
+def test_tonne_and_microgram_mass_units():
+    canon_t = canonicalize(entries_of("U-238, 3"), "t")
+    assert canon_t.library_unit == "t"
+    # 1 t = 1e6 g; display back from grams must recover the tonne value.
+    assert scale_to_display(3.0e6, "g", "t") == pytest.approx(3.0, rel=1e-12)
+    assert scale_to_display(5.0e-6, "g", "µg") == pytest.approx(5.0, rel=1e-9)
+
+
+def test_microsign_labels_display_without_error():
+    # Regression: the 'µ' in the dropdown labels is the micro sign (U+00B5),
+    # not the library's 'u'/'μ' -- scale_to_display must resolve the label
+    # to the library unit or the converter raises ValueError.
+    assert scale_to_display(3.7e10, "Bq", "µCi") == pytest.approx(1.0e6, rel=1e-6)
+    assert scale_to_display(1.0, "g", "µg") == pytest.approx(1.0e6, rel=1e-9)

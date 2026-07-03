@@ -7,6 +7,8 @@ behaves. Also the regression guard that adding the reverse tab did not
 break the forward tool.
 """
 
+from datetime import date
+
 from streamlit.testing.v1 import AppTest
 
 APP = "app/ui.py"
@@ -66,6 +68,52 @@ def test_age_tab_solves_and_shows_metrics():
     assert not at.exception
     assert len(at.dataframe) >= 1  # residual/forward-check table rendered
     assert any("Median age" in m.label for m in at.metric)
+
+
+def test_forward_tab_date_mode_computes_interval():
+    at = make_app()
+    at.run()
+    at.text_area(key="fwd_paste").set_value("Cs-137, 1000")
+    at.radio(key="fwd_timemode").set_value("By date")
+    at.run()
+    at.date_input(key="fwd_refdate").set_value(date(2020, 1, 1))
+    at.date_input(key="fwd_tgtdate").set_value(date(2026, 1, 1))
+    at.run()
+    at.button(key="fwd_run").click()
+    at.run()
+    assert not at.exception
+    assert len(at.dataframe) >= 1
+    assert any("2020-01-01" in s.value for s in at.subheader)
+
+
+def test_reverse_tab_sigma_convention_selector_runs():
+    at = make_app()
+    at.run()
+    at.text_area(key="rev_paste").set_value("Cs-137, 1000, 10%\nSr-90, 400, 6%")
+    at.checkbox(key="rev_closed").check()
+    at.run()
+    at.selectbox(key="rev_sigma_conv").set_value("2σ (95%)")
+    at.run()
+    at.button(key="rev_run").click()
+    at.run()
+    assert not at.exception
+    assert len(at.dataframe) >= 1
+
+
+def test_age_tab_shows_implied_origin_date():
+    at = make_app()
+    at.run()
+    at.text_area(key="age_t0_paste").set_value("Pu-241, 1.0e15\nAm-241, 2.0e13")
+    at.text_area(key="age_today_paste").set_value("Pu-241, 2.98e14\nAm-241, 6.95e14")
+    at.checkbox(key="age_use_date").check()
+    at.run()
+    at.date_input(key="age_meas_date").set_value(date(2026, 7, 3))
+    at.checkbox(key="age_closed").check()
+    at.run()
+    at.button(key="age_run").click()
+    at.run()
+    assert not at.exception
+    assert any("Implied origin date" in i.value for i in at.info)
 
 
 def test_reverse_tab_surfaces_parse_errors():
