@@ -148,6 +148,26 @@ def test_nan_and_inf_rejected():
     assert len(result.errors) == 2
 
 
+def test_too_many_lines_is_rejected_as_a_dos_guard():
+    from app.parsing import MAX_INPUT_LINES
+
+    text = "\n".join(["Cs-137, 1"] * (MAX_INPUT_LINES + 1))
+    result = parse_paste(text)
+    assert not result.ok
+    assert result.entries == []
+    assert "Too many input lines" in result.errors[0].message
+
+
+def test_at_the_line_limit_still_parses():
+    # A legitimately large-but-bounded paste must still work.
+    from app.parsing import MAX_INPUT_LINES
+
+    text = "\n".join(["Cs-137, 1"] + ["Co-60, 1"] * (MAX_INPUT_LINES - 1))
+    result = parse_paste(text)
+    # Duplicates aside, the size guard itself must not fire.
+    assert not any("Too many input lines" in e.message for e in result.errors)
+
+
 # --- optional uncertainty field (reverse-mode input; forward ignores it) ---
 
 

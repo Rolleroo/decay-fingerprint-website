@@ -3,8 +3,11 @@ import math
 import pytest
 import radioactivedecay as rd
 
+import dataclasses
+
 from app.conversions import canonicalize
 from app.engine import (
+    audit_conservation,
     auto_time_grid_s,
     filter_nuclides_by_half_life,
     half_life_readable,
@@ -211,6 +214,60 @@ def test_half_life_readable_keeps_sub_year_units_unchanged():
 
 def test_half_life_readable_stable():
     assert half_life_readable("Pb-208") == "stable"
+
+
+# --- Layer-3 runtime conservation audit ---
+
+
+def test_audit_clean_on_normal_chain():
+    result = series_for("U-238, 1.0e20", "atoms", times_s=[0.0, 1e9, 1e15])
+    assert audit_conservation(result) == []
+
+
+def test_audit_clean_on_fraction_mode():
+    result = series_for(
+        "Cs-137, 60\nCo-60, 40", "activity fraction", frac_as_percent=True,
+        times_s=[0.0, 1e7, 1e9],
+    )
+    assert audit_conservation(result) == []
+
+
+def test_audit_clean_under_extreme_half_life_spread():
+    # The Po-214 / U-238 span produces ~1e-12-relative float noise (incl.
+    # tiny negatives); the audit's tolerances must not flag it.
+    times = auto_time_grid_s(["Po-214", "U-238"])
+    result = series_for("Po-214, 1.0e6\nU-238, 1.0e6", "Bq", times_s=times)
+    assert audit_conservation(result) == []
+
+
+def test_audit_detects_injected_negative():
+    result = series_for("Co-60, 1000", "Bq", times_s=[0.0, 3600.0])
+    poisoned = dataclasses.replace(
+        result, activities_bq={**result.activities_bq, "Co-60": [1000.0, -5.0]}
+    )
+    breaches = audit_conservation(poisoned)
+    assert any("Negative activity for Co-60" in b for b in breaches)
+
+
+def test_audit_detects_atom_nonconservation():
+    result = series_for("U-238, 1.0e20", "atoms", times_s=[0.0, 1e15])
+    atoms = {n: list(v) for n, v in result.atoms.items()}
+    atoms["U-238"][1] *= 0.5  # destroy half the atoms out of nowhere
+    poisoned = dataclasses.replace(result, atoms=atoms)
+    breaches = audit_conservation(poisoned)
+    assert any("Atom count not conserved" in b for b in breaches)
+
+
+def test_audit_detects_bad_fraction_sum():
+    result = series_for(
+        "Cs-137, 0.6\nCo-60, 0.4", "activity fraction", frac_as_percent=False,
+        times_s=[0.0, 1e7],
+    )
+    fractions = {n: list(v) for n, v in result.fractions.items()}
+    fractions["Cs-137"][1] += 0.5  # now sums to ~1.5
+    poisoned = dataclasses.replace(result, fractions=fractions)
+    breaches = audit_conservation(poisoned)
+    assert any("Fractions sum to" in b for b in breaches)
 
 
 def test_extreme_half_life_spread_does_not_break_the_solve():

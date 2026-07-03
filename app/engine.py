@@ -213,6 +213,72 @@ def run_time_series(canon: CanonResult, times_s: list[float]) -> TimeSeriesResul
     )
 
 
+def audit_conservation(result: TimeSeriesResult, rtol: float = 1e-4) -> list[str]:
+    """Layer-3 conservation self-audit (validation spec Sec 6): laws that
+    must hold on *every* calculation regardless of input, run live as a
+    silently-wrong detector rather than only in the test suite.
+
+    Returns a list of human-readable breach messages; an empty list means
+    the result passed. Checks the calculation's *outputs* -- no negative
+    quantities, fraction renormalization, and atom-count conservation
+    across the series (requires a t=0 baseline). The static
+    branching-fractions-sum-to-1 law is a property of the nuclear data, not
+    of a calculation, so it stays a one-time test (test_engine) rather than
+    a per-run cost here. Tolerances are deliberately loose: float64
+    cancellation over extreme half-life spreads produces ~1e-12-relative
+    noise, which is physics of the solver, not a bug.
+    """
+    breaches: list[str] = []
+
+    # 1. No meaningfully-negative quantities anywhere. The floor scales with
+    #    the largest magnitude in each series so cancellation noise is ignored.
+    for label, series in (
+        ("activity", result.activities_bq),
+        ("mass", result.masses_g),
+        ("moles", result.moles_mol),
+        ("atoms", result.atoms),
+    ):
+        scale = max((abs(v) for vals in series.values() for v in vals), default=0.0)
+        floor = 1e-9 * scale
+        for nuclide, vals in series.items():
+            worst = min(vals, default=0.0)
+            if worst < -floor:
+                breaches.append(
+                    f"Negative {label} for {nuclide} ({worst:.3g}): quantities cannot go "
+                    f"negative under decay."
+                )
+
+    # 2. Fraction renormalization: fraction-mode outputs sum to 1 (or 100).
+    if result.fractions:
+        target = 100.0 if result.frac_as_percent else 1.0
+        for i, t in enumerate(result.times_s):
+            total = sum(result.fractions[n][i] for n in result.nuclides)
+            if total > 0 and abs(total - target) > rtol * target:
+                breaches.append(
+                    f"Fractions sum to {total:.6g} at t={t:.3g} s (expected {target:g})."
+                )
+                break
+
+    # 3. Atom-count conservation across the series (one parent nucleus becomes
+    #    one daughter nucleus at every decay, so the total is invariant). Only
+    #    checkable when a t=0 baseline is present.
+    if len(result.times_s) >= 2 and result.times_s[0] == 0.0:
+        totals = [
+            sum(result.atoms[n][i] for n in result.nuclides) for i in range(len(result.times_s))
+        ]
+        initial = totals[0]
+        if initial > 0:
+            for i, tot in enumerate(totals):
+                if abs(tot - initial) > rtol * initial:
+                    breaches.append(
+                        f"Atom count not conserved: {tot:.6g} at t={result.times_s[i]:.3g} s "
+                        f"vs {initial:.6g} at t=0."
+                    )
+                    break
+
+    return breaches
+
+
 def filter_nuclides_by_half_life(
     result: TimeSeriesResult,
     threshold_s: float | None,

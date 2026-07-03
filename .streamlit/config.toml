@@ -1,0 +1,11 @@
+# Streamlit runtime configuration (read by both local runs and Hugging Face
+# Spaces). The theme block is intentionally minimal for now -- the UI design
+# pass will develop it.
+
+[server]
+# First-line cap on upload size (MB). app/ingest.py enforces a tighter
+# post-decompression bound as defence in depth.
+maxUploadSize = 10
+
+[browser]
+gatherUsageStats = false

@@ -30,7 +30,12 @@ import streamlit as st
 from app.age_solve import age_readable, solve_age_from_entries
 from app.conversions import UNIT_GROUPS, ValidationError, canonicalize, scale_to_display
 from app.dates import DateError, date_from_age, forward_interval_seconds
-from app.engine import filter_nuclides_by_half_life, half_life_readable, run_time_series
+from app.engine import (
+    audit_conservation,
+    filter_nuclides_by_half_life,
+    half_life_readable,
+    run_time_series,
+)
 from app.ingest import IngestError, paste_text_from_upload
 from app.parsing import parse_paste
 from app.reverse import atoms_to_display, reconstruct_from_entries
@@ -111,11 +116,27 @@ def _sigma_convention_selector(key_prefix: str) -> float:
     return SIGMA_CONVENTIONS[label]
 
 
+# A cell whose text begins with one of these can be interpreted as a formula
+# when a CSV is opened in Excel/Sheets (CSV injection). Some result cells
+# legitimately start with '+'/'-' (e.g. a "+5.00%" mismatch), so neutralise
+# on export by prefixing a single quote rather than dropping the character.
+_CSV_INJECTION_LEADERS = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _csv_safe(df: pd.DataFrame) -> pd.DataFrame:
+    def clean(x):
+        if isinstance(x, str) and x[:1] in _CSV_INJECTION_LEADERS:
+            return "'" + x
+        return x
+
+    return df.map(clean)
+
+
 def _download_buttons(df: pd.DataFrame, basename: str, key_prefix: str) -> None:
     c1, c2 = st.columns(2)
     c1.download_button(
         "Download CSV",
-        df.to_csv(index=False).encode("utf-8"),
+        _csv_safe(df).to_csv(index=False).encode("utf-8"),
         file_name=f"{basename}.csv",
         mime="text/csv",
         key=f"{key_prefix}_dl_csv",
@@ -192,10 +213,13 @@ def _quantity_column_label(canon) -> str:
 
 
 def _results_table(canon, result, nuclides: list[str] | None = None) -> pd.DataFrame:
-    """Build the single-time fingerprint table from a one-point TimeSeriesResult.
+    """Build the fingerprint table from the *last* step of a TimeSeriesResult.
 
-    ``nuclides`` restricts which rows appear (e.g. after a half-life
-    filter); defaults to every nuclide present (inputs and progeny).
+    The forward tab decays across ``[0.0, target]`` (a t=0 baseline plus the
+    requested time) so the conservation audit has something to check; the
+    displayed composition is always the last step. ``nuclides`` restricts
+    which rows appear (e.g. after a half-life filter); defaults to every
+    nuclide present (inputs and progeny).
     """
     base_series, base_unit = _base_unit_and_series(canon.kind, canon.library_unit, result)
     display_unit_for_scaling = "Bq" if canon.kind == "specific_activity" else canon.display_unit
@@ -203,7 +227,7 @@ def _results_table(canon, result, nuclides: list[str] | None = None) -> pd.DataF
 
     rows = []
     for nuclide in nuclides if nuclides is not None else result.nuclides:
-        raw_value = base_series[nuclide][0]
+        raw_value = base_series[nuclide][-1]
         value = raw_value if canon.kind.startswith("fraction") else scale_to_display(
             raw_value, base_unit, display_unit_for_scaling
         )
@@ -292,7 +316,9 @@ def _forward_tab() -> None:
                 st.session_state["canon"] = canon
                 st.session_state["target_time_s"] = target_time_s
                 st.session_state["fwd_time_label"] = time_label
-                st.session_state["result"] = run_time_series(canon, [target_time_s])
+                # Include a t=0 baseline so the Layer-3 conservation audit can
+                # check atom conservation; the table shows the last step.
+                st.session_state["result"] = run_time_series(canon, [0.0, target_time_s])
 
     if "result" in st.session_state:
         canon = st.session_state["canon"]
@@ -319,13 +345,21 @@ def _forward_tab() -> None:
         else:
             kept_nuclides = result.nuclides
 
+        breaches = audit_conservation(result)
+        if breaches:
+            st.error(
+                "**Conservation self-audit failed** — the result violates a law that "
+                "must always hold, so it is likely wrong. Please report this input:\n\n"
+                + "\n".join(f"- {b}" for b in breaches)
+            )
+
         table = _results_table(canon, result, kept_nuclides)
         st.dataframe(table, use_container_width=True, hide_index=True)
         _download_buttons(table, "forward_fingerprint", "fwd")
 
         with st.expander("Copy table for Excel"):
             st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
-            st.code(table.to_csv(sep="\t", index=False), language=None)
+            st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
 
 
 CONDITIONING_BADGE = {"pass": "✅ pass", "marginal": "⚠️ marginal", "fail": "❌ fail"}
@@ -587,7 +621,7 @@ def _reverse_tab() -> None:
 
         with st.expander("Copy table for Excel"):
             st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
-            st.code(table.to_csv(sep="\t", index=False), language=None)
+            st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
 
 
 def _age_results_table(canon_today, result) -> pd.DataFrame:

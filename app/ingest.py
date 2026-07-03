@@ -29,6 +29,15 @@ _ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 # the comma is the decimal separator); tab from spreadsheet copy-paste.
 _DELIMITERS = (",", ";", "\t", "|")
 
+# Defence-in-depth bounds on uploaded files (a results table is kilobytes;
+# these only exist to stop a hostile or accidental oversized upload -- an
+# XLSX zip bomb, a runaway export -- from exhausting memory. Streamlit's own
+# maxUploadSize (.streamlit/config.toml) is the first line; these back it up
+# after decompression, where the real cost lands.
+MAX_UPLOAD_BYTES = 8_000_000  # 8 MB of raw file
+MAX_ROWS = 100_000
+MAX_COLS = 256
+
 # Header keywords, most specific first. A column matches if its (lowercased)
 # name contains any of the fragments.
 _NUCLIDE_KEYS = ("nuclide", "radionuclide", "isotope", "nuclid", "nucleide")
@@ -244,6 +253,12 @@ def read_upload(filename: str, data: bytes) -> pd.DataFrame:
     commas, and instrument-export preamble rows. Everything is read as text;
     numeric validation stays with the shared parser (one source of truth).
     """
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise IngestError(
+            f"File is too large ({len(data) / 1e6:.1f} MB; limit "
+            f"{MAX_UPLOAD_BYTES / 1e6:.0f} MB). A results table should be well under this."
+        )
+
     name = filename.lower()
     if name.endswith((".xlsx", ".xlsm", ".xls")):
         df = _read_excel(filename, data)
@@ -251,6 +266,12 @@ def read_upload(filename: str, data: bytes) -> pd.DataFrame:
         df = _read_csv(data)
     else:
         raise IngestError(f"Unsupported file type: {filename}. Use CSV or XLSX.")
+
+    if df.shape[0] > MAX_ROWS or df.shape[1] > MAX_COLS:
+        raise IngestError(
+            f"File is too big to be a fingerprint ({df.shape[0]} rows × {df.shape[1]} "
+            f"columns; limits {MAX_ROWS:,} × {MAX_COLS}). Check you uploaded the right file."
+        )
 
     df.columns = [str(c).strip() for c in df.columns]
     return df.dropna(how="all")

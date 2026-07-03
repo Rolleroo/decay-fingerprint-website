@@ -11,6 +11,14 @@ from dataclasses import dataclass
 
 import radioactivedecay as rd
 
+# Upper bound on how many lines a single paste/upload may contain. Real
+# fingerprints are tiny (decay chains have <30 members; even a multi-sample
+# dump is a few hundred rows), so this only exists to bound work on a
+# hostile or accidental megabyte-of-text input -- a denial-of-service guard,
+# not a real-world limit. Surfaced as a single error rather than silently
+# truncating.
+MAX_INPUT_LINES = 10_000
+
 
 @dataclass(frozen=True)
 class ParsedEntry:
@@ -79,7 +87,21 @@ def parse_paste(text: str) -> ParseResult:
     errors: list[ParseError] = []
     seen_at: dict[str, list[int]] = {}
 
-    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+    raw_lines = text.splitlines()
+    if sum(1 for ln in raw_lines if ln.strip()) > MAX_INPUT_LINES:
+        return ParseResult(
+            entries=[],
+            errors=[
+                ParseError(
+                    0,
+                    "",
+                    f"Too many input lines (limit {MAX_INPUT_LINES:,}). Split the data "
+                    f"into smaller batches.",
+                )
+            ],
+        )
+
+    for line_no, raw_line in enumerate(raw_lines, start=1):
         raw = raw_line.strip()
         if not raw:
             continue

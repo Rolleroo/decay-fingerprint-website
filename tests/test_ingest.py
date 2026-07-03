@@ -162,6 +162,24 @@ def test_unsupported_extension_rejected():
         read_upload("data.pdf", b"whatever")
 
 
+def test_oversized_file_rejected():
+    from app.ingest import MAX_UPLOAD_BYTES
+
+    big = b"Nuclide,Bq\n" + b"Cs-137,1\n" * (MAX_UPLOAD_BYTES // 8)
+    assert len(big) > MAX_UPLOAD_BYTES
+    with pytest.raises(IngestError, match="too large"):
+        read_upload("big.csv", big)
+
+
+def test_too_many_columns_rejected():
+    from app.ingest import MAX_COLS
+
+    header = ",".join(f"c{i}" for i in range(MAX_COLS + 5))
+    row = ",".join("1" for _ in range(MAX_COLS + 5))
+    with pytest.raises(IngestError, match="too big"):
+        read_upload("wide.csv", f"{header}\n{row}".encode("utf-8"))
+
+
 def test_full_pipeline_upload_to_parser_clean():
     csv_text = "Nuclide,Activity (Bq),Unc %\nCs-137,3.7e9,5\nSr-90,5.0e7,3\n"
     text, mapping = paste_text_from_upload("f.csv", csv_text.encode("utf-8"))
