@@ -21,6 +21,7 @@ buttons on every results table.
 
 from __future__ import annotations
 
+import io
 import math
 from datetime import date, timedelta
 
@@ -64,6 +65,57 @@ PLACEHOLDER_PASTE = "Cs-137, 3.7e9\nCo-60, 1.2e8\nSr-90, 5.0e7\nMo-99, 2.0e6"
 PLACEHOLDER_PASTE_REVERSE = "Cs-137, 3.7e9, 5%\nSr-90, 5.0e7 ± 2e6\nAm-241, 3.1e5"
 
 
+# A minimal example used both as the on-screen format illustration and as the
+# downloadable template. Third row shows the uncertainty column is optional.
+_TEMPLATE_ROWS = [
+    ("Cs-137", "3.7e9", "5%"),
+    ("Co-60", "1.2e8", "2%"),
+    ("Sr-90", "5.0e7", ""),
+]
+
+
+def _template_frame() -> pd.DataFrame:
+    return pd.DataFrame(_TEMPLATE_ROWS, columns=["Nuclide", "Value", "Uncertainty"])
+
+
+def _format_help(key_prefix: str) -> None:
+    """The 'what should my file look like' guidance shown before upload, with
+    downloadable CSV/XLSX templates. Shared by every input box."""
+    with st.expander("Accepted input format (paste or file)"):
+        st.markdown(
+            "- **One nuclide per row.**\n"
+            "- **Nuclide** — `Cs-137`, `Cs137`, or `137Cs` all work; metastable "
+            "states like `Tc-99m` are kept.\n"
+            "- **Value** — the amount, in the unit you pick below.\n"
+            "- **Uncertainty** *(optional)* — absolute in the same unit (`1e8`) or "
+            "relative with a percent sign (`5%`).\n"
+            "- **Files (CSV / TSV / XLSX)** — the nuclide, value, and uncertainty "
+            "columns are found by their headers, so **a header row is required**; "
+            "any instrument metadata rows *above* the header are skipped. Non-UTF-8 "
+            "encodings, `;` delimiters, and decimal commas are handled automatically. "
+            "A `%` in the uncertainty column's header marks that whole column relative."
+        )
+        st.dataframe(_template_frame(), use_container_width=True, hide_index=True)
+        tmpl = _template_frame()
+        c1, c2 = st.columns(2)
+        c1.download_button(
+            "Template CSV",
+            tmpl.to_csv(index=False).encode("utf-8"),
+            file_name="fingerprint_template.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_tmpl_csv",
+        )
+        buf = io.BytesIO()
+        tmpl.to_excel(buf, index=False)
+        c2.download_button(
+            "Template XLSX",
+            buf.getvalue(),
+            file_name="fingerprint_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key_prefix}_tmpl_xlsx",
+        )
+
+
 def _input_text(
     key_prefix: str, label: str, placeholder: str, height: int, help_text: str | None = None
 ) -> str:
@@ -84,6 +136,7 @@ def _input_text(
             "delimiters, decimal commas, and metadata preamble rows are handled."
         ),
     )
+    _format_help(key_prefix)
     if uploaded is not None:
         try:
             text, mapping = paste_text_from_upload(uploaded.name, uploaded.getvalue())
@@ -354,7 +407,13 @@ def _forward_tab() -> None:
             )
 
         table = _results_table(canon, result, kept_nuclides)
-        st.dataframe(table, use_container_width=True, hide_index=True)
+        quantity_col = table.columns[-1]  # the numeric quantity column
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True,
+            column_config={quantity_col: st.column_config.NumberColumn(format="%.4g")},
+        )
         _download_buttons(table, "forward_fingerprint", "fwd")
 
         with st.expander("Copy table for Excel"):
@@ -895,9 +954,10 @@ def main() -> None:
             "mass (g…t incl. µg), amount (mol, atoms), and relative fraction/percent."
         )
 
-    st.markdown(
-        "**Data & library credits** — this tool is a thin interface over "
-        "[`radioactivedecay`](https://github.com/radioactivedecay/radioactivedecay), "
+    with st.expander("Data & library credits, references, and how to cite"):
+        st.markdown(
+            "**Data & library credits** — this tool is a thin interface over "
+            "[`radioactivedecay`](https://github.com/radioactivedecay/radioactivedecay), "
         "created by **Alex Malins and Thom Lemoine**, with Ian Cullen and other "
         "contributors (MIT License, © 2020–2024 Japan Atomic Energy Agency & "
         "contributors). It performs all decay-chain physics and unit conversions; "
