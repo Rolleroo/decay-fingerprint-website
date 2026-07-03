@@ -13,11 +13,11 @@ import radioactivedecay as rd
 
 # Upper bound on how many lines a single paste/upload may contain. Real
 # fingerprints are tiny (decay chains have <30 members; even a multi-sample
-# dump is a few hundred rows), so this only exists to bound work on a
-# hostile or accidental megabyte-of-text input -- a denial-of-service guard,
-# not a real-world limit. Surfaced as a single error rather than silently
-# truncating.
-MAX_INPUT_LINES = 10_000
+# dump is a few hundred rows), so 1000 is already generous -- this exists to
+# bound work on a hostile or accidental oversized input, a denial-of-service
+# guard, not a real-world limit. Surfaced as a single error rather than
+# silently truncating.
+MAX_INPUT_LINES = 1_000
 
 
 @dataclass(frozen=True)
