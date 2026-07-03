@@ -199,8 +199,14 @@ def solve_age(
 
     m = np.array([atoms_today[n] for n in fit_nuclides])
     sigma = np.array([sigma_atoms_today[n] for n in fit_nuclides])
-    floor = SIGMA_FLOOR_REL * max(float(m.max(initial=0.0)), float(F.max()), 1.0)
-    sigma_eff = np.maximum(sigma, floor)
+    # The floor stands in for sigma ONLY where the input is exact (sigma =
+    # 0), and is keyed per-nuclide to the measured value itself -- never to
+    # the forward model's largest value, which can exceed a trace-level
+    # measurement by many orders of magnitude and would silently replace a
+    # real stated uncertainty (revalidation finding, 2026-07-03).
+    measured_scale = max(float(m.max(initial=0.0)), 1.0)
+    floor = SIGMA_FLOOR_REL * np.where(m > 0, m, measured_scale)
+    sigma_eff = np.where(sigma > 0, sigma, floor)
     deterministic = bool(np.all(sigma <= 0))
 
     def chi2_true(t_s: float) -> float:

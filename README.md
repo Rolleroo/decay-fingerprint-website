@@ -81,8 +81,11 @@ app/
   ui.py               # Streamlit front end (Forward + Reverse + Age tabs)
 docs/
   mode-a-addendum.md # Mode A contract (inputs/outputs/gates/validation)
+  revalidation-*.md  # end-to-end revalidation reports (findings + fixes)
 examples/             # synthetic datasets + generator (U-235 chain)
 tests/                # parsing/conversions/engine/validation/reverse/age/UI suite
+validation/           # deep revalidation sweep (manual-run: MC calibration,
+                      # cross-mode consistency, randomized round-trips)
 ```
 
 The parser, conversion layer, and decay engines are kept independent of the
@@ -115,8 +118,15 @@ trusted on visual plausibility. The suite covers:
 - **Mode A gates** -- the age anchor (today = t0/8 -> exactly 3
   half-lives), stable-daughter chronometry (Zr-90 from Sr-90), refusal
   when nothing measurably decays, detection of ambiguous double-solution
-  ages (the Tc-99m ingrowth peak), and a chi-squared flag when the inputs
-  are inconsistent with closed-system decay.
+  ages (the Tc-99m ingrowth peak; the Th-234 ingrowth/decay two-branch
+  case), and a chi-squared flag when the inputs are inconsistent with
+  closed-system decay.
+- **Deep revalidation sweep** (`validation/deep_revalidation.py`,
+  manual-run) -- statistical calibration of the 95% MC intervals over many
+  noisy repetitions (both modes), cross-mode consistency (Mode B's
+  reconstruction fed to Mode A recovers the age), and randomized
+  round-trip fuzzing. Findings and fixes are written up in
+  `docs/revalidation-*.md`.
 
 ## Status
 

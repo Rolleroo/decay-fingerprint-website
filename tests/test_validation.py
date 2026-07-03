@@ -198,3 +198,17 @@ def test_layer2_cross_check_u235_chain_50_years():
     # The actinium series (used by the examples/ synthetic datasets),
     # including the Ac-227 -> Th-227 / Fr-223 branch point.
     assert_implementations_agree("U-235", 50.0 * 86400.0 * 365.25)
+
+
+def test_layer2_cross_check_th232_chain_100_years():
+    # Added in revalidation (2026-07-03): the thorium series was the one
+    # major natural chain the cross-check had not covered. Includes the
+    # Bi-212 alpha/beta branch (~36/64) feeding Tl-208 and Po-212.
+    assert_implementations_agree("Th-232", 100.0 * 86400.0 * 365.25)
+
+
+def test_layer2_cross_check_pu241_chain_100_years():
+    # Added in revalidation (2026-07-03): the chain behind the round-trip
+    # dating cases, cross-checked independently -- including Pu-241's own
+    # tiny alpha branch to U-237 (~2.5e-5) alongside the beta to Am-241.
+    assert_implementations_agree("Pu-241", 100.0 * 86400.0 * 365.25)

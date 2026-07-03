@@ -156,6 +156,59 @@ def test_inconsistent_inputs_flagged_by_chi2():
     assert any("Poor fit" in w for w in result.warnings)
 
 
+def test_trace_daughter_far_below_parent_scale_keeps_its_real_sigma():
+    # Regression (found in revalidation): the sigma floor for "exact"
+    # inputs was a single global value keyed to the largest magnitude in
+    # the fit, so a trace-level nuclide (in-grown Th-234 at ~1e13 atoms)
+    # measured alongside its enormous parent (U-238 at 1e24 atoms) had its
+    # real 2% uncertainty silently replaced by a floor a million times
+    # larger -- erasing its weight in the fit and leaving the age
+    # unconstrained. The floor must be per-nuclide and must only fill in
+    # where sigma is exactly zero.
+    truth_age = 30.0 * 86400.0  # ~1.24 Th-234 half-lives: strong sensitivity
+    t0 = {"U-238": 1.0e24}
+    today = forward_atoms(t0, truth_age)
+    assert today["Th-234"] < 1e-9 * today["U-238"]  # the scale gap under test
+
+    result = solve_age(
+        canon_atoms(t0),
+        canon_atoms({"U-238": today["U-238"], "Th-234": today["Th-234"]}),
+        default_rel_sigma=0.02,
+        n_trials=4_000,
+        seed=13,
+    )
+    # Th-234 carries all the age information (U-238 is unchanged over 30
+    # days); with its sigma intact the age resolves cleanly, and the
+    # measured parent kills the late-branch solution -> no ambiguity.
+    assert result.resolvable
+    assert not result.ambiguous_ages_s
+    assert result.age_s_lo < truth_age < result.age_s_hi
+    assert result.age_s == pytest.approx(truth_age, rel=1e-3)
+
+
+def test_lone_ingrowth_measurement_under_long_parent_is_ambiguous():
+    # Companion physics check (documented during revalidation): a *lone*
+    # Th-234 measurement under a U-238 source is genuinely two-valued --
+    # the ingrowth curve rises to equilibrium (~30 d branch) then falls
+    # with U-238's own decay, so a ~3.5-Gyr age reproduces the same value.
+    # The solver must surface both candidates rather than certify either.
+    truth_age = 30.0 * 86400.0
+    t0 = {"U-238": 1.0e24}
+    today = forward_atoms(t0, truth_age)
+
+    result = solve_age(
+        canon_atoms(t0),
+        canon_atoms({"Th-234": today["Th-234"]}),
+        default_rel_sigma=0.02,
+        n_trials=4_000,
+        seed=13,
+    )
+    assert len(result.ambiguous_ages_s) == 2
+    assert result.ambiguous_ages_s[0] == pytest.approx(truth_age, rel=0.05)
+    assert result.ambiguous_ages_s[1] > 1.0e9 * YEAR_S  # the falling branch
+    assert not result.resolvable  # interval spans the branches; refuse
+
+
 # --- Monte Carlo coverage ---
 
 
