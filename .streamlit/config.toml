@@ -1,6 +1,5 @@
 # Streamlit runtime configuration (read by both local runs and Hugging Face
-# Spaces). The theme block is intentionally minimal for now -- the UI design
-# pass will develop it.
+# Spaces).
 
 [server]
 # First-line cap on upload size (MB). app/ingest.py enforces a tighter
@@ -9,3 +8,14 @@ maxUploadSize = 10
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+# Sober "scientific instrument" palette for a waste-management / health-physics
+# audience: a calm slate-teal accent (deliberately not an alarm colour), cool
+# neutral greys, near-black text. Restrained and legible, not consumer-flashy.
+base = "light"
+primaryColor = "#2b6777"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef2f5"
+textColor = "#1f2328"
+font = "sans serif"

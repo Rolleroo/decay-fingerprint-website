@@ -329,70 +329,78 @@ def _forward_tab() -> None:
         "Forward decay: given a composition now, show what it becomes after some time — "
         "every nuclide present at the target time, including progeny that grow in."
     )
-    st.subheader("Input")
-    paste_text = _input_text(
-        "fwd",
-        "Paste 'nuclide, value' lines (one per line)",
-        PLACEHOLDER_PASTE,
-        height=200,
-    )
+    in_col, out_col = st.columns([2, 3], gap="large")
 
-    unit_choice, frac_as_percent = _unit_picker("fwd")
+    with in_col:
+        with st.container(border=True):
+            st.subheader("Input")
+            paste_text = _input_text(
+                "fwd",
+                "Paste 'nuclide, value' lines (one per line)",
+                PLACEHOLDER_PASTE,
+                height=200,
+            )
+            unit_choice, frac_as_percent = _unit_picker("fwd")
+            target_time_s, time_label, time_error = _interval_input(
+                "fwd",
+                elapsed_label="Decay to",
+                reference_label="Reference date (of the pasted values)",
+                target_label="Decay to date",
+            )
+            run = st.button("Decay", type="primary", key="fwd_run", use_container_width=True)
 
-    target_time_s, time_label, time_error = _interval_input(
-        "fwd",
-        elapsed_label="Decay to",
-        reference_label="Reference date (of the pasted values)",
-        target_label="Decay to date",
-    )
+        # st.button() only returns True on the single rerun triggered by the
+        # click itself -- every subsequent rerun (e.g. from a later widget
+        # interaction) sees run=False. Stash the computed result in
+        # session_state so the table stays in place across those reruns.
+        if run:
+            if time_error:
+                st.error(time_error)
+            parse_result = parse_paste(paste_text)
+            if parse_result.errors:
+                _show_parse_errors(parse_result)
 
-    run = st.button("Decay", type="primary", key="fwd_run")
+            if not parse_result.entries:
+                if not parse_result.errors:
+                    st.info("Paste at least one 'nuclide, value' line.")
+            elif time_error is None:
+                try:
+                    canon = canonicalize(
+                        parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
+                    )
+                except ValidationError as exc:
+                    st.error(str(exc))
+                    canon = None
 
-    # st.button() only returns True on the single rerun triggered by the
-    # click itself -- every subsequent rerun (e.g. from a later widget
-    # interaction) sees run=False. Stash the computed result in
-    # session_state so the table stays in place across those reruns.
-    if run:
-        if time_error:
-            st.error(time_error)
-        parse_result = parse_paste(paste_text)
-        if parse_result.errors:
-            _show_parse_errors(parse_result)
+                if canon is not None:
+                    st.session_state["canon"] = canon
+                    st.session_state["target_time_s"] = target_time_s
+                    st.session_state["fwd_time_label"] = time_label
+                    # Include a t=0 baseline so the Layer-3 conservation audit
+                    # can check atom conservation; the table shows the last step.
+                    st.session_state["result"] = run_time_series(canon, [0.0, target_time_s])
 
-        if not parse_result.entries:
-            if not parse_result.errors:
-                st.info("Paste at least one 'nuclide, value' line.")
-        elif time_error is None:
-            try:
-                canon = canonicalize(parse_result.entries, unit_choice, frac_as_percent=frac_as_percent)
-            except ValidationError as exc:
-                st.error(str(exc))
-                canon = None
+    with out_col:
+        if "result" not in st.session_state:
+            st.info("Enter a fingerprint on the left and click **Decay** — results appear here.")
+            return
 
-            if canon is not None:
-                st.session_state["canon"] = canon
-                st.session_state["target_time_s"] = target_time_s
-                st.session_state["fwd_time_label"] = time_label
-                # Include a t=0 baseline so the Layer-3 conservation audit can
-                # check atom conservation; the table shows the last step.
-                st.session_state["result"] = run_time_series(canon, [0.0, target_time_s])
-
-    if "result" in st.session_state:
         canon = st.session_state["canon"]
         result = st.session_state["result"]
 
         st.subheader(f"Fingerprint after {st.session_state.get('fwd_time_label', '')}")
 
         apply_filter = st.checkbox("Filter out short-lived nuclides", value=False)
-        filter_col, filter_unit_col = st.columns(2)
-        with filter_col:
-            filter_value = st.number_input("Filter out nuclides with half-life below", min_value=0.0, value=3.0)
-        with filter_unit_col:
-            filter_unit = st.selectbox(
-                "Filter unit", list(TIME_UNIT_TO_SECONDS), index=3, key="filter_unit"
-            )  # months
-
         if apply_filter:
+            filter_col, filter_unit_col = st.columns(2)
+            with filter_col:
+                filter_value = st.number_input(
+                    "Hide half-life below", min_value=0.0, value=3.0
+                )
+            with filter_unit_col:
+                filter_unit = st.selectbox(
+                    "Filter unit", list(TIME_UNIT_TO_SECONDS), index=3, key="filter_unit"
+                )  # months
             filter_threshold_s = filter_value * TIME_UNIT_TO_SECONDS[filter_unit]
             # include_stable=False: when the filter is actually engaged,
             # stable end-products are cut too, not just short-lived ones.
@@ -535,93 +543,104 @@ def _reverse_tab() -> None:
         "result is continuously self-checked by decaying it forward again."
     )
 
-    st.subheader("Input")
-    paste_text = _input_text(
-        "rev",
-        "Paste 'nuclide, value[, uncertainty]' lines (one per line)",
-        PLACEHOLDER_PASTE_REVERSE,
-        height=200,
-        help_text=(
-            "The uncertainty column is optional: absolute in the same unit "
-            "('Cs-137, 3.7e9, 1e8' or '3.7e9 ± 1e8') or relative ('3.7e9, 5%'). "
-            "Lines without one get the default from Advanced options."
-        ),
-    )
+    in_col, out_col = st.columns([2, 3], gap="large")
 
-    unit_choice, frac_as_percent = _unit_picker("rev")
-
-    age_s, age_label, age_error = _interval_input(
-        "rev",
-        elapsed_label="Known age",
-        reference_label="Origin / manufacture date",
-        target_label="Measurement date",
-    )
-
-    with st.expander("Advanced (Monte Carlo settings)"):
-        n_trials = int(
-            st.number_input(
-                "Monte Carlo trials",
-                min_value=1_000,
-                max_value=500_000,
-                value=100_000,
-                step=1_000,
-                help="10⁵–10⁶ trials is the DQPB-recommended range; 10⁵ runs in seconds.",
+    with in_col:
+        with st.container(border=True):
+            st.subheader("Input")
+            paste_text = _input_text(
+                "rev",
+                "Paste 'nuclide, value[, uncertainty]' lines (one per line)",
+                PLACEHOLDER_PASTE_REVERSE,
+                height=200,
+                help_text=(
+                    "The uncertainty column is optional: absolute in the same unit "
+                    "('Cs-137, 3.7e9, 1e8' or '3.7e9 ± 1e8') or relative ('3.7e9, 5%'). "
+                    "Lines without one get the default from Advanced options."
+                ),
             )
-        )
-        default_sigma_pct = st.number_input(
-            "Default measurement uncertainty (%) for lines without one",
-            min_value=0.0,
-            max_value=100.0,
-            value=5.0,
-            help="An assumed seed value so MC runs out of the box — override per line with real measurement precision.",
-        )
-        coverage_k = _sigma_convention_selector("rev")
-
-    closed_system = st.checkbox(
-        "I understand these results assume a **closed system**: nothing was added to or "
-        "removed from the sample over the stated age except by radioactive decay. "
-        "The tool cannot detect open-system behaviour.",
-        key="rev_closed",
-    )
-
-    run = st.button("Reconstruct t=0", type="primary", disabled=not closed_system, key="rev_run")
-    if not closed_system:
-        st.caption("Acknowledge the closed-system assumption to enable reconstruction.")
-
-    if run:
-        parse_result = parse_paste(paste_text)
-        if parse_result.errors:
-            _show_parse_errors(parse_result)
-
-        if age_error:
-            st.error(age_error)
-        elif age_s is None or age_s <= 0:
-            st.error("The known age must be greater than zero.")
-        elif not parse_result.entries:
-            if not parse_result.errors:
-                st.info("Paste at least one 'nuclide, value' line.")
-        else:
-            try:
-                canon = canonicalize(parse_result.entries, unit_choice, frac_as_percent=frac_as_percent)
-            except ValidationError as exc:
-                st.error(str(exc))
-                canon = None
-
-            if canon is not None:
-                with st.spinner("Back-solving with Monte Carlo uncertainty..."):
-                    rev_result = reconstruct_from_entries(
-                        parse_result.entries,
-                        canon,
-                        age_s,
-                        default_rel_sigma=default_sigma_pct / 100.0,
-                        n_trials=n_trials,
-                        coverage_k=coverage_k,
+            unit_choice, frac_as_percent = _unit_picker("rev")
+            age_s, age_label, age_error = _interval_input(
+                "rev",
+                elapsed_label="Known age",
+                reference_label="Origin / manufacture date",
+                target_label="Measurement date",
+            )
+            with st.expander("Advanced (Monte Carlo settings)"):
+                n_trials = int(
+                    st.number_input(
+                        "Monte Carlo trials",
+                        min_value=1_000,
+                        max_value=500_000,
+                        value=100_000,
+                        step=1_000,
+                        help="10⁵–10⁶ trials is the DQPB-recommended range; 10⁵ runs in seconds.",
                     )
-                st.session_state["rev_canon"] = canon
-                st.session_state["rev_result"] = rev_result
-                st.session_state["rev_age_label"] = age_label
+                )
+                default_sigma_pct = st.number_input(
+                    "Default measurement uncertainty (%) for lines without one",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=5.0,
+                    help="An assumed seed value so MC runs out of the box — override per line with real measurement precision.",
+                )
+                coverage_k = _sigma_convention_selector("rev")
+            closed_system = st.checkbox(
+                "I understand these results assume a **closed system**: nothing was added to or "
+                "removed from the sample over the stated age except by radioactive decay. "
+                "The tool cannot detect open-system behaviour.",
+                key="rev_closed",
+            )
+            run = st.button(
+                "Reconstruct t=0", type="primary", disabled=not closed_system,
+                key="rev_run", use_container_width=True,
+            )
+            if not closed_system:
+                st.caption("Acknowledge the closed-system assumption to enable reconstruction.")
 
-    if "rev_result" in st.session_state:
+        if run:
+            parse_result = parse_paste(paste_text)
+            if parse_result.errors:
+                _show_parse_errors(parse_result)
+
+            if age_error:
+                st.error(age_error)
+            elif age_s is None or age_s <= 0:
+                st.error("The known age must be greater than zero.")
+            elif not parse_result.entries:
+                if not parse_result.errors:
+                    st.info("Paste at least one 'nuclide, value' line.")
+            else:
+                try:
+                    canon = canonicalize(
+                        parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
+                    )
+                except ValidationError as exc:
+                    st.error(str(exc))
+                    canon = None
+
+                if canon is not None:
+                    with st.spinner("Back-solving with Monte Carlo uncertainty..."):
+                        rev_result = reconstruct_from_entries(
+                            parse_result.entries,
+                            canon,
+                            age_s,
+                            default_rel_sigma=default_sigma_pct / 100.0,
+                            n_trials=n_trials,
+                            coverage_k=coverage_k,
+                        )
+                    st.session_state["rev_canon"] = canon
+                    st.session_state["rev_result"] = rev_result
+                    st.session_state["rev_age_label"] = age_label
+
+    with out_col:
+        if "rev_result" not in st.session_state:
+            st.info(
+                "Enter today's measured composition and a known age on the left, then "
+                "click **Reconstruct t=0** — results appear here."
+            )
+            return
+
         canon = st.session_state["rev_canon"]
         result = st.session_state["rev_result"]
 
@@ -724,100 +743,115 @@ def _age_tab() -> None:
         "(see docs/mode-a-addendum.md)."
     )
 
-    st.subheader("Known composition at t=0")
-    t0_text = _input_text(
-        "age_t0",
-        "Paste 'nuclide, value[, uncertainty]' lines — lines without an uncertainty are treated as exact",
-        "Pu-241, 1.0e15\nAm-241, 2.0e13",
-        height=150,
-    )
-    t0_unit, _ = _unit_picker("age_t0")
+    in_col, out_col = st.columns([2, 3], gap="large")
 
-    st.subheader("Measured composition today")
-    today_text = _input_text(
-        "age_today",
-        "Paste 'nuclide, value[, uncertainty]' lines — lines without one get the default uncertainty",
-        "Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
-        height=150,
-    )
-    today_unit, _ = _unit_picker("age_today")
-
-    measurement_date = None
-    if st.checkbox(
-        "I have a measurement date (show the implied origin/production date)", key="age_use_date"
-    ):
-        measurement_date = st.date_input(
-            "Measurement date", value=date.today(), key="age_meas_date", format="YYYY-MM-DD"
-        )
-
-    with st.expander("Advanced (Monte Carlo settings)"):
-        n_trials = int(
-            st.number_input(
-                "Monte Carlo trials",
-                min_value=1_000,
-                max_value=200_000,
-                value=20_000,
-                step=1_000,
-                key="age_trials",
-                help="Each trial re-solves the age, so the default is lower than reverse mode's.",
+    with in_col:
+        with st.container(border=True):
+            st.subheader("Known composition at t=0")
+            t0_text = _input_text(
+                "age_t0",
+                "Paste 'nuclide, value[, uncertainty]' — lines without an uncertainty are treated as exact",
+                "Pu-241, 1.0e15\nAm-241, 2.0e13",
+                height=150,
             )
-        )
-        default_sigma_pct = st.number_input(
-            "Default measurement uncertainty (%) for today-lines without one",
-            min_value=0.0,
-            max_value=100.0,
-            value=5.0,
-            key="age_sigma",
-        )
-        coverage_k = _sigma_convention_selector("age")
+            t0_unit, _ = _unit_picker("age_t0")
 
-    closed_system = st.checkbox(
-        "I understand the solved age assumes a **closed system** and that the t=0 "
-        "composition is complete for every measured chain.",
-        key="age_closed",
-    )
-    run = st.button("Solve for age", type="primary", disabled=not closed_system, key="age_run")
-    if not closed_system:
-        st.caption("Acknowledge the assumptions to enable the solve.")
+            st.subheader("Measured composition today")
+            today_text = _input_text(
+                "age_today",
+                "Paste 'nuclide, value[, uncertainty]' — lines without one get the default uncertainty",
+                "Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
+                height=150,
+            )
+            today_unit, _ = _unit_picker("age_today")
 
-    if run:
-        parse_t0 = parse_paste(t0_text)
-        parse_today = parse_paste(today_text)
-        ok = True
-        for label, parsed in [("t=0", parse_t0), ("today", parse_today)]:
-            if parsed.errors:
-                st.error(f"Fix the following in the {label} paste:")
-                for e in parsed.errors:
-                    st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
-                ok = False
-            elif not parsed.entries:
-                st.info(f"Paste at least one 'nuclide, value' line for {label}.")
-                ok = False
-
-        if ok:
-            try:
-                canon_t0 = canonicalize(parse_t0.entries, t0_unit)
-                canon_today = canonicalize(parse_today.entries, today_unit)
-                with st.spinner("Fitting the age with Monte Carlo uncertainty..."):
-                    result = solve_age_from_entries(
-                        parse_t0.entries,
-                        canon_t0,
-                        parse_today.entries,
-                        canon_today,
-                        default_rel_sigma=default_sigma_pct / 100.0,
-                        n_trials=n_trials,
-                        coverage_k=coverage_k,
-                    )
-            except ValidationError as exc:
-                st.error(str(exc))
-            else:
-                st.session_state["age_result"] = result
-                st.session_state["age_canon_today"] = canon_today
-                st.session_state["age_measurement_date"] = (
-                    measurement_date.isoformat() if measurement_date is not None else None
+            measurement_date = None
+            if st.checkbox(
+                "I have a measurement date (show the implied origin/production date)",
+                key="age_use_date",
+            ):
+                measurement_date = st.date_input(
+                    "Measurement date", value=date.today(), key="age_meas_date", format="YYYY-MM-DD"
                 )
 
-    if "age_result" in st.session_state:
+            with st.expander("Advanced (Monte Carlo settings)"):
+                n_trials = int(
+                    st.number_input(
+                        "Monte Carlo trials",
+                        min_value=1_000,
+                        max_value=200_000,
+                        value=20_000,
+                        step=1_000,
+                        key="age_trials",
+                        help="Each trial re-solves the age, so the default is lower than reverse mode's.",
+                    )
+                )
+                default_sigma_pct = st.number_input(
+                    "Default measurement uncertainty (%) for today-lines without one",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=5.0,
+                    key="age_sigma",
+                )
+                coverage_k = _sigma_convention_selector("age")
+
+            closed_system = st.checkbox(
+                "I understand the solved age assumes a **closed system** and that the t=0 "
+                "composition is complete for every measured chain.",
+                key="age_closed",
+            )
+            run = st.button(
+                "Solve for age", type="primary", disabled=not closed_system,
+                key="age_run", use_container_width=True,
+            )
+            if not closed_system:
+                st.caption("Acknowledge the assumptions to enable the solve.")
+
+        if run:
+            parse_t0 = parse_paste(t0_text)
+            parse_today = parse_paste(today_text)
+            ok = True
+            for label, parsed in [("t=0", parse_t0), ("today", parse_today)]:
+                if parsed.errors:
+                    st.error(f"Fix the following in the {label} paste:")
+                    for e in parsed.errors:
+                        st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
+                    ok = False
+                elif not parsed.entries:
+                    st.info(f"Paste at least one 'nuclide, value' line for {label}.")
+                    ok = False
+
+            if ok:
+                try:
+                    canon_t0 = canonicalize(parse_t0.entries, t0_unit)
+                    canon_today = canonicalize(parse_today.entries, today_unit)
+                    with st.spinner("Fitting the age with Monte Carlo uncertainty..."):
+                        result = solve_age_from_entries(
+                            parse_t0.entries,
+                            canon_t0,
+                            parse_today.entries,
+                            canon_today,
+                            default_rel_sigma=default_sigma_pct / 100.0,
+                            n_trials=n_trials,
+                            coverage_k=coverage_k,
+                        )
+                except ValidationError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["age_result"] = result
+                    st.session_state["age_canon_today"] = canon_today
+                    st.session_state["age_measurement_date"] = (
+                        measurement_date.isoformat() if measurement_date is not None else None
+                    )
+
+    with out_col:
+        if "age_result" not in st.session_state:
+            st.info(
+                "Enter the known t=0 composition and today's measurement on the left, then "
+                "click **Solve for age** — results appear here."
+            )
+            return
+
         result = st.session_state["age_result"]
         canon_today = st.session_state["age_canon_today"]
 
@@ -875,19 +909,22 @@ def _age_tab() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Decay Fingerprint Tool", layout="wide")
-    st.title("Decay Fingerprint Tool")
+    st.set_page_config(
+        page_title="Decay Fingerprint Tool", page_icon="☢️", layout="wide"
+    )
+    st.title("☢️ Decay Fingerprint Tool")
     st.caption(
-        "Built on the published, validated `radioactivedecay` library (ICRP-107 data) -- "
-        "the library is the trusted calculation engine; this app is a thin wrapper around it. "
-        "Forward decay, plus reverse reconstruction of the original composition when the age is known."
+        "Radionuclide decay, reverse reconstruction, and age-dating for waste-management "
+        "and health-physics work. All decay physics comes from the published, validated "
+        "`radioactivedecay` library (ICRP-107 data) — this app is a thin, tested wrapper around it."
     )
     st.warning(
-        "**Scope boundary:** this tool does not model spontaneous-fission ingrowth "
-        "or neutron-induced activation. Results are decay-only. Do not use for "
-        "reactor-burnup fingerprints without understanding this.",
+        "**Scope boundary:** decay only — no spontaneous-fission ingrowth or "
+        "neutron-induced activation. Not for reactor-burnup fingerprints without "
+        "understanding this.",
         icon="⚠️",
     )
+    st.divider()
 
     tab_forward, tab_reverse, tab_age = st.tabs(
         [
@@ -969,38 +1006,38 @@ def main() -> None:
         st.markdown(
             "**Data & library credits** — this tool is a thin interface over "
             "[`radioactivedecay`](https://github.com/radioactivedecay/radioactivedecay), "
-        "created by **Alex Malins and Thom Lemoine**, with Ian Cullen and other "
-        "contributors (MIT License, © 2020–2024 Japan Atomic Energy Agency & "
-        "contributors). It performs all decay-chain physics and unit conversions; "
-        "this app adds none of its own.\n\n"
-        "**Reverse-mode method** — the reverse mode's design (forward-model "
-        "back-solve, Monte Carlo uncertainty propagation, the analytical-"
-        "resolvability gate applied before MC, and short-lived-intermediate "
-        "pruning) transfers the pattern published in **DQPB**:\n"
-        "> Timothy Pollard, Jon Woodhead, John Hellstrom, John Engel, Roger Powell "
-        "& Russell Drysdale, *DQPB: software for calculating disequilibrium U–Pb "
-        "ages*. Geochronology, **5**, 181–196 (2023). DOI: "
-        "[10.5194/gchron-5-181-2023](https://doi.org/10.5194/gchron-5-181-2023).\n\n"
-        "DQPB's underlying package [`pysoplot`](https://pypi.org/project/pysoplot/) "
-        "(MIT License) was studied as the reference implementation; the pattern is "
-        "transferred, no code is copied. The governing decay-chain equations are "
-        "**Bateman's** (H. Bateman, *Solution of a system of differential equations "
-        "occurring in the theory of radioactive transformations*, Proc. Cambridge "
-        "Philos. Soc., **15**, 423–427, 1910), which the validation suite also "
-        "evaluates directly as an independent cross-check of the engine.\n\n"
-        "If you use results from this tool in research, please cite the library's "
-        "own paper, per their request:\n"
-        "> Alex Malins & Thom Lemoine, *radioactivedecay: A Python package for "
-        "radioactive decay calculations*. Journal of Open Source Software, **7** (71), "
-        "3318 (2022). DOI: [10.21105/joss.03318](https://doi.org/10.21105/joss.03318).\n\n"
-        "Nuclear data:\n"
-        "- Decay data: ICRP, 2008. *Nuclear Decay Data for Dosimetric Calculations*, "
-        "ICRP Publication 107, Ann. ICRP 38(3). © 2008 A. Endo and K.F. Eckerman.\n"
-        "- Atomic mass data: W.J. Huang et al. 2021, *AME2020 (I)*, Chinese Phys. C "
-        "45 030002; Meng Wang et al. 2021, *AME2020 (II)*, Chinese Phys. C 45 030003; "
-        "F.G. Kondev et al. 2021, *NUBASE2020*, Chinese Phys. C 45 030001. Source: "
-        "[AMDC](https://www-nds.iaea.org/amdc/)."
-    )
+            "created by **Alex Malins and Thom Lemoine**, with Ian Cullen and other "
+            "contributors (MIT License, © 2020–2024 Japan Atomic Energy Agency & "
+            "contributors). It performs all decay-chain physics and unit conversions; "
+            "this app adds none of its own.\n\n"
+            "**Reverse-mode method** — the reverse mode's design (forward-model "
+            "back-solve, Monte Carlo uncertainty propagation, the analytical-"
+            "resolvability gate applied before MC, and short-lived-intermediate "
+            "pruning) transfers the pattern published in **DQPB**:\n"
+            "> Timothy Pollard, Jon Woodhead, John Hellstrom, John Engel, Roger Powell "
+            "& Russell Drysdale, *DQPB: software for calculating disequilibrium U–Pb "
+            "ages*. Geochronology, **5**, 181–196 (2023). DOI: "
+            "[10.5194/gchron-5-181-2023](https://doi.org/10.5194/gchron-5-181-2023).\n\n"
+            "DQPB's underlying package [`pysoplot`](https://pypi.org/project/pysoplot/) "
+            "(MIT License) was studied as the reference implementation; the pattern is "
+            "transferred, no code is copied. The governing decay-chain equations are "
+            "**Bateman's** (H. Bateman, *Solution of a system of differential equations "
+            "occurring in the theory of radioactive transformations*, Proc. Cambridge "
+            "Philos. Soc., **15**, 423–427, 1910), which the validation suite also "
+            "evaluates directly as an independent cross-check of the engine.\n\n"
+            "If you use results from this tool in research, please cite the library's "
+            "own paper, per their request:\n"
+            "> Alex Malins & Thom Lemoine, *radioactivedecay: A Python package for "
+            "radioactive decay calculations*. Journal of Open Source Software, **7** (71), "
+            "3318 (2022). DOI: [10.21105/joss.03318](https://doi.org/10.21105/joss.03318).\n\n"
+            "Nuclear data:\n"
+            "- Decay data: ICRP, 2008. *Nuclear Decay Data for Dosimetric Calculations*, "
+            "ICRP Publication 107, Ann. ICRP 38(3). © 2008 A. Endo and K.F. Eckerman.\n"
+            "- Atomic mass data: W.J. Huang et al. 2021, *AME2020 (I)*, Chinese Phys. C "
+            "45 030002; Meng Wang et al. 2021, *AME2020 (II)*, Chinese Phys. C 45 030003; "
+            "F.G. Kondev et al. 2021, *NUBASE2020*, Chinese Phys. C 45 030001. Source: "
+            "[AMDC](https://www-nds.iaea.org/amdc/)."
+        )
 
 
 if __name__ == "__main__":
