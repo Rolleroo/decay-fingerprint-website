@@ -509,9 +509,20 @@ def reconstruct_t0(
         if not math.isfinite(median):
             conditioning = "fail"
             notes.append("non-finite reconstruction")
-        elif median < 0:
+        elif median < 0 and hi[i] < 0:
+            # Confidently negative (the whole 95% interval is below zero):
+            # the genuine bad-reconstruction signature -- the input is
+            # inconsistent with pure decay over this age.
             conditioning = "fail"
             notes.append("negative reconstructed amount (bad-reconstruction signature)")
+        elif median < 0:
+            # Median negative but the interval straddles zero: consistent
+            # with ~zero at t=0. This is the *expected* result for an
+            # in-grown daughter that was essentially absent originally, so
+            # it is not a failure -- flag it as marginal and do not let it
+            # taint its parent chain (refinement 2026-07-03).
+            conditioning = "marginal"
+            notes.append("consistent with zero at t=0 (likely absent / in-grown daughter)")
         elif rel_width > REL_WIDTH_MARGINAL:
             conditioning = "fail"
             notes.append(f"95% interval spans +/-{rel_width:.0%} of the median")
@@ -571,34 +582,64 @@ def reconstruct_t0(
             )
         )
 
-    # --- whole-chain unreliability (reverse spec Sec 4 output 5): coarse
-    # --- and safe -- one bad *measured* member taints every member of its
-    # --- chain; unrelated chains stay clean. Assumed gap fills are judged
-    # --- on the assumption axis instead, so a deliberately loose gap prior
-    # --- does not taint an otherwise healthy chain.
+    # --- chain unreliability flagging (reverse spec Sec 4 output 5),
+    # --- refined 2026-07-03 by failure kind so the rule stops over-flagging
+    # --- catastrophically when a progeny-rich composition is pasted in:
+    #
+    #   * GATED members (reach-back beyond the resolvability gate -- a
+    #     short-lived daughter that simply cannot be traced back) taint only
+    #     their DESCENDANTS. Their long-lived ANCESTORS are untouched,
+    #     because in Mode B's back-solve a parent's reconstruction uses only
+    #     its own measurement -- a gated daughter says nothing about it. This
+    #     is the direction the spec itself identified (parent -> descendant);
+    #     Mode B's coupling is unambiguously directional, unlike A/C.
+    #   * HARD failures (negative / non-finite reconstruction -- a sign the
+    #     input is internally inconsistent, e.g. open-system) keep the coarse
+    #     "whole connected chain" taint, since that inconsistency can cast
+    #     doubt on every member.
+    #   * Assumed gap fills are judged on the assumption axis instead, so a
+    #     deliberately loose gap prior never taints a healthy chain.
     row_by_name = {r.nuclide: r for r in rows}
-    names = list(row_by_name)
-    chain_of = {n: n for n in names}
+    names = set(row_by_name)
+    gated_set = set(gated)
+    tainted_names: set[str] = set()
 
-    def find(n: str) -> str:
-        while chain_of[n] != n:
-            chain_of[n] = chain_of[chain_of[n]]
-            n = chain_of[n]
-        return n
+    # Directional taint from gated members: descendants only.
+    for g in gated_set:
+        tainted_names |= descendants(g) & names
 
-    for a in names:
-        for b in names:
-            if a < b and (b in descendants(a) or a in descendants(b)):
-                chain_of[find(a)] = find(b)
+    # Coarse whole-chain taint from hard (non-gated, non-assumed) failures.
+    hard_fail = {
+        r.nuclide
+        for r in rows
+        if r.conditioning == "fail" and not r.assumed and r.nuclide not in gated_set
+    }
+    if hard_fail:
+        chain_of = {n: n for n in names}
 
-    bad_chains = {find(r.nuclide) for r in rows if r.conditioning == "fail" and not r.assumed}
-    tainted_names = {n for n in names if find(n) in bad_chains}
+        def find(n: str) -> str:
+            while chain_of[n] != n:
+                chain_of[n] = chain_of[chain_of[n]]
+                n = chain_of[n]
+            return n
+
+        for a in names:
+            for b in names:
+                if a < b and (b in descendants(a) or a in descendants(b)):
+                    chain_of[find(a)] = find(b)
+        bad_chains = {find(n) for n in hard_fail}
+        tainted_names |= {n for n in names if find(n) in bad_chains}
+
     if tainted_names:
         rows = [
             dataclasses.replace(r, chain_tainted=r.nuclide in tainted_names) for r in rows
         ]
 
-    negative_medians = [r.nuclide for r in rows if math.isfinite(r.median_atoms) and r.median_atoms < 0]
+    negative_medians = [
+        r.nuclide
+        for r in rows
+        if math.isfinite(r.median_atoms) and r.median_atoms < 0 and r.hi_atoms < 0
+    ]
     if negative_medians:
         warnings.append(
             f"Negative reconstructed amounts for {', '.join(negative_medians)} -- the classic "

@@ -173,21 +173,36 @@ def test_reachback_beyond_gate_is_refused_not_fabricated():
     assert any("Not reconstructable" in w for w in result.warnings)
 
 
-def test_one_gated_member_taints_its_whole_chain_but_not_others():
-    # At 100 years, Y-90 (64 h) is ~13,700 half-lives back -> gated. Its
-    # parent Sr-90 is individually fine (3.5 half-lives) but must inherit
-    # the chain flag; unrelated Cs-137 must stay clean.
+def test_gated_daughter_does_not_taint_its_long_lived_parent():
+    # At 100 years, Y-90 (64 h) is ~13,700 half-lives back -> gated. Refined
+    # 2026-07-03: a gated *daughter* taints only its descendants, never its
+    # ANCESTOR -- the parent's back-solve uses only its own measurement, so
+    # Sr-90 stays clean and reliable. (Old coarse rule tainted the whole
+    # chain and made progeny-rich inputs read as all-unreliable.) Unrelated
+    # Cs-137 also stays clean.
     age = 100 * YEAR_S
     result = exact(canon_atoms({"Sr-90": 1.0e15, "Y-90": 1.0e11, "Cs-137": 1.0e14}), age)
 
-    assert row(result, "Y-90").conditioning == "fail"
+    assert row(result, "Y-90").conditioning == "fail"  # correctly not traceable back
     sr = row(result, "Sr-90")
-    assert sr.conditioning == "pass"  # its own solve is healthy...
-    assert sr.chain_tainted  # ...but one bad member taints the chain
-    assert sr.unreliable
+    assert sr.conditioning == "pass"
+    assert not sr.chain_tainted  # a gated daughter no longer taints the parent
+    assert not sr.unreliable
     cs = row(result, "Cs-137")
     assert not cs.chain_tainted
     assert not cs.unreliable
+
+
+def test_hard_failure_still_taints_the_whole_chain():
+    # A NEGATIVE reconstruction (internally inconsistent input, e.g. open
+    # system) is different from a gate: it can cast doubt on the whole
+    # connected chain, so the coarse taint is kept. Sr-90 present with Y-90
+    # exactly zero at 10 days is impossible -> Y-90 goes negative -> Sr-90
+    # (its parent) is tainted.
+    age = 10 * 86400.0
+    result = exact(canon_atoms({"Sr-90": 1.0e15, "Y-90": 0.0}), age)
+    assert row(result, "Y-90").median_atoms < 0
+    assert row(result, "Sr-90").chain_tainted
 
 
 def test_inconsistent_input_yields_loud_negative_flag_and_failed_forward_check():
