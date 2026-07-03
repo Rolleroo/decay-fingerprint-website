@@ -325,6 +325,10 @@ def _show_parse_errors(parse_result) -> None:
 
 
 def _forward_tab() -> None:
+    st.caption(
+        "Forward decay: given a composition now, show what it becomes after some time — "
+        "every nuclide present at the target time, including progeny that grow in."
+    )
     st.subheader("Input")
     paste_text = _input_text(
         "fwd",
@@ -636,9 +640,13 @@ def _reverse_tab() -> None:
                 "suspect regardless of its individual flags."
             )
 
+        # Genuine warnings (bad reconstruction, gates, assumption flags) stay
+        # prominent above the result; the routine closed-system caveat is a
+        # footnote shown after it, so the result reads first.
+        footnotes: list[str] = []
         for w in result.warnings:
             if "conditional on closed-system" in w:
-                st.caption(f"ℹ️ {w}")
+                footnotes.append(w)
             elif "Negative reconstructed" in w or "Forward check failed" in w:
                 st.error(w)
             else:
@@ -650,26 +658,29 @@ def _reverse_tab() -> None:
             return
         st.dataframe(table, use_container_width=True, hide_index=True)
         _download_buttons(table, "reconstructed_t0", "rev")
-        st.caption(
+
+        footnotes.insert(
+            0,
             (
                 f"{result.n_trials:,} Monte Carlo trials; values are medians with 95% intervals."
                 if result.n_trials
                 else "All uncertainties are zero — deterministic back-solve, no MC spread."
             )
             + " 'Conditioning' is numerical stability at this reach-back; 'Assumptions' is a "
-            "separate axis — a green conditioning flag never implies the value is uniquely determined."
+            "separate axis — a green conditioning flag never implies the value is uniquely determined.",
         )
-
         if result.excluded_stable:
-            st.caption(
-                f"Excluded stable nuclides (carry no timing information and cannot be "
+            footnotes.append(
+                "Excluded stable nuclides (carry no timing information and cannot be "
                 f"un-grown): {', '.join(result.excluded_stable)}"
             )
         if result.pruned:
-            st.caption(
-                f"Pruned intermediates (half-life negligible against the reach-back age; "
+            footnotes.append(
+                "Pruned intermediates (half-life negligible against the reach-back age; "
                 f"decay *through* them is still modelled): {', '.join(result.pruned)}"
             )
+        for note in footnotes:
+            st.caption(note)
 
         with st.expander("Forward-check overlay (always computed)", expanded=not result.forward_check_ok):
             st.caption(
