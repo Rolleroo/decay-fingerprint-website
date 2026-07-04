@@ -938,13 +938,66 @@ def _age_tab() -> None:
     _download_buttons(age_table, "age_forward_check", "age")
 
 
-# Verdict badge: emoji, label, and the st.* level used to colour the box.
-_VERDICT_DISPLAY = {
-    "compatible": ("✅", "Compatible", "success"),
-    "marginal": ("⚠️", "In tension", "warning"),
-    "incompatible": ("❌", "Not compatible", "error"),
-    "n/a": ("—", "Not testable", "info"),
+# Q&A results layout: each verdict maps to the st.* box level and the leading
+# answer word for its question ("Is the sample the right amount of the right
+# stuff?" -> "No." etc.).
+_COMPAT_ANSWER = {
+    "compatible": ("success", "✅ **Yes.**"),
+    "marginal": ("warning", "⚠️ **Borderline.**"),
+    "incompatible": ("error", "❌ **No.**"),
 }
+
+# Question 1 (amounts and all), sentence per verdict.
+_COMPAT_Q1_TEXT = {
+    "compatible": (
+        "Aged {age}, the assumed sample predicts today's measurement "
+        "to within its stated uncertainty"
+    ),
+    "marginal": (
+        "Aged {age}, the prediction comes close to today's measurement, "
+        "but the remaining mismatch is more than measurement scatter "
+        "comfortably explains"
+    ),
+    "incompatible": (
+        "Aged {age}, the assumed sample predicts today's values well "
+        "outside what you measured"
+    ),
+}
+
+# Question 2 (proportions only), sentence per verdict.
+_COMPAT_Q2_TEXT = {
+    "compatible": (
+        "Setting the total amount aside, the nuclide-to-nuclide "
+        "proportions match"
+    ),
+    "marginal": (
+        "The nuclide-to-nuclide proportions almost fit, but there is "
+        "real tension left"
+    ),
+    "incompatible": (
+        "Even setting the total amount aside, the nuclide-to-nuclide "
+        "proportions don't match"
+    ),
+}
+
+
+def _compat_total_phrase(scale: float) -> str:
+    """One plain sentence about the overall amount, from the fitted scale.
+    Never phrased as a percent-off (a x0.3 scale is '3x too much assumed',
+    not '70% too high' -- percents mislead far from 1)."""
+    if not math.isfinite(scale):
+        return ""
+    if abs(scale - 1.0) < 0.05:
+        return " The measured total itself is about right."
+    if scale >= 1.0:
+        return (
+            f" The measured total is about {scale:.2g}× what the "
+            "assumed sample predicts."
+        )
+    return (
+        f" The measured total is only about {scale:.0%} of what the "
+        "assumed sample predicts."
+    )
 
 
 def _fmt_p(p: float) -> str:
@@ -1089,28 +1142,31 @@ def _compat_tab() -> None:
     st.divider()
     st.subheader("Results — compatibility")
 
-    emoji, label, level = _VERDICT_DISPLAY[result.verdict]
+    st.markdown("**Is the sample the right amount of the right stuff?**")
+    level, answer = _COMPAT_ANSWER[result.verdict]
     getattr(st, level)(
-        f"{emoji} **As entered (exact amounts): {label}.** "
-        f"Today's measurement is scored against the assumed original aged by {age_label}."
-    )
-    st.caption(
-        f"Goodness of fit chi²/dof = {result.chi2_per_dof:.3g} (~1 is a good match); "
-        f"p = {_fmt_p(result.p_value)} across {result.dof} measured "
-        f"nuclide{'s' if result.dof != 1 else ''} (p is the chance of a mismatch this "
-        "large from measurement scatter alone — small p argues against the hypothesis)."
+        f"{answer} {_COMPAT_Q1_TEXT[result.verdict].format(age=age_label)} "
+        f"(χ²/dof = {result.chi2_per_dof:.3g}, p = {_fmt_p(result.p_value)})."
     )
 
+    st.markdown("**Are at least the proportions right?**")
     if result.ratio_testable:
-        r_emoji, r_label, _ = _VERDICT_DISPLAY[result.verdict_scaled]
-        off = result.scale - 1.0
-        st.markdown(
-            f"{r_emoji} **As a pattern / ratio ({r_label.lower()}):** with the overall "
-            f"amount left free, the best-fit scale is **{result.scale:.3g}×** "
-            f"(assumed amounts {off:+.0%} overall), and the isotopic *pattern* fits at "
-            f"chi²/dof = {result.chi2_per_dof_scaled:.3g}, p = {_fmt_p(result.p_value_scaled)}. "
-            "Use this line when you trust the ratios but not the absolute quantities."
+        level, answer = _COMPAT_ANSWER[result.verdict_scaled]
+        getattr(st, level)(
+            f"{answer} {_COMPAT_Q2_TEXT[result.verdict_scaled]} "
+            f"(p = {_fmt_p(result.p_value_scaled)})."
+            + _compat_total_phrase(result.scale)
         )
+    else:
+        st.info(
+            "— Can't say: only one nuclide was measured, so there are no "
+            "proportions to test separately from the amount."
+        )
+
+    st.caption(
+        "Read p as the chance that measurement scatter alone produces a mismatch "
+        "this big: a small p argues against the theory. For χ²/dof, ~1 is a good match."
+    )
 
     for w in result.warnings:
         if "closed system" in w:
@@ -1214,13 +1270,14 @@ def main() -> None:
             "2. **Enter the assumed age** (elapsed or by dates).\n"
             "3. **Paste today's measured composition** with uncertainties, and pick its unit.\n"
             "4. **Acknowledge the assumptions** and click Check compatibility.\n"
-            "5. **Read the verdict.** Nothing is solved — the assumed original is decayed "
-            "forward by the assumed age and scored against the measurement with zero free "
-            "parameters. You get a plain compatible / in-tension / not-compatible verdict "
-            "with a goodness-of-fit and p-value, a second verdict for the *ratio/pattern* "
-            "alone (overall amount fitted out, so you can trust ratios without absolute "
-            "quantities), a loud flag for any measured nuclide the assumed origin can't "
-            "produce, and a per-nuclide table with each mismatch as a pull in σ.\n\n"
+            "5. **Read the two answers.** Nothing is solved — the assumed original is "
+            "decayed forward by the assumed age and compared with the measurement. You "
+            "get a yes / borderline / no answer to two questions: *is the sample the "
+            "right amount of the right stuff?* (amounts and all), and *are at least the "
+            "proportions right?* (total amount set aside — useful when you trust the "
+            "ratios but not the absolute quantities). Any measured nuclide the assumed "
+            "origin can't produce is flagged loudly, and a per-nuclide table shows each "
+            "mismatch as a pull in σ.\n\n"
             "**Copy table for Excel** — open that section and click the copy icon to "
             "grab the results as tab-separated text ready to paste into a spreadsheet.\n\n"
             "**Shared conveniences (all tabs):**\n"
