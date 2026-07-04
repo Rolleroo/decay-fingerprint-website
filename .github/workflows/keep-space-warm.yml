@@ -1,0 +1,37 @@
+# Keeps the Hugging Face Space awake and acts as a basic uptime monitor.
+#
+# Free-tier HF Spaces sleep after ~48 hours without a visitor, giving the
+# next visitor a 30-60 s cold start. Pinging the app every 6 hours keeps it
+# permanently warm. If the Space stops answering, this workflow fails and
+# GitHub emails the repo owner -- the alerting an external monitor would
+# provide, without another account.
+#
+# NB: GitHub disables cron workflows after 60 days without repo activity;
+# any push (or re-enabling in the Actions tab) revives it.
+
+name: Keep HF Space warm
+
+on:
+  schedule:
+    - cron: "17 */6 * * *" # every 6 h, off the top of the hour
+  workflow_dispatch: {} # allow a manual run to test it
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the Space (retry over ~2 min to ride out a cold start)
+        run: |
+          url="https://raddecay-rad-decay-tool.hf.space/_stcore/health"
+          for attempt in 1 2 3 4; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$url" || echo "000")
+            echo "attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Space is up."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Space did not answer 200 after 4 attempts." >&2
+          exit 1
