@@ -34,9 +34,9 @@ _DELIMITERS = (",", ";", "\t", "|")
 # XLSX zip bomb, a runaway export -- from exhausting memory. Streamlit's own
 # maxUploadSize (.streamlit/config.toml) is the first line; these back it up
 # after decompression, where the real cost lands.
-MAX_UPLOAD_BYTES = 8_000_000  # 8 MB of raw file
-MAX_ROWS = 100_000
-MAX_COLS = 256
+MAX_UPLOAD_BYTES = 500_000  # 500 KB -- a nuclide results table is only kilobytes
+MAX_ROWS = 20_000
+MAX_COLS = 64
 
 # Header keywords, most specific first. A column matches if its (lowercased)
 # name contains any of the fragments.

@@ -324,15 +324,39 @@ def _show_parse_errors(parse_result) -> None:
         st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
 
 
+# Distinct accent colour per tab so it's obvious which one you're on.
+TAB_COLOURS = {"fwd": "#2b6777", "rev": "#8a5a2b", "age": "#4a4a7a"}
+
+
+def _panel_header(colour_key: str, label: str) -> None:
+    colour = TAB_COLOURS[colour_key]
+    st.markdown(
+        f'<div style="background:{colour};color:#fff;padding:5px 12px;border-radius:6px;'
+        f'font-weight:600;font-size:0.9rem;letter-spacing:0.03em;margin-bottom:0.6rem;">'
+        f"{label}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _beta_note(what: str) -> None:
+    st.info(
+        f"🧪 **Beta — read the flags, not just the numbers.** {what} It's accurate "
+        "for clean, directly-measured inputs, but can be over-cautious on unusual "
+        "ones. Enter only the nuclides you actually measured — not a full list of "
+        "decay products — and trust the reliability flags and the self-check."
+    )
+
+
 def _forward_tab() -> None:
     st.caption(
-        "Forward decay: given a composition now, show what it becomes after some time — "
-        "every nuclide present at the target time, including progeny that grow in."
+        "Start with a mixture of nuclides and see what it becomes after a chosen "
+        "time — including the decay products that build up along the way."
     )
     in_col, out_col = st.columns([2, 3], gap="large")
 
     with in_col:
         with st.container(border=True):
+            _panel_header("fwd", "FORWARD DECAY")
             st.subheader("Input")
             paste_text = _input_text(
                 "fwd",
@@ -537,16 +561,16 @@ def _reverse_forward_check_table(canon, result) -> pd.DataFrame:
 
 def _reverse_tab() -> None:
     st.caption(
-        "Mode B: given today's measured composition and a **known age**, reconstruct "
-        "the composition at t=0. Forward-model based (never raw matrix inversion); "
-        "every value is a Monte Carlo distribution with reliability flags, and the "
-        "result is continuously self-checked by decaying it forward again."
+        "You measured a sample **today** and you know **how old it is**. This works "
+        "out what it was made from originally, by running the decay backwards."
     )
+    _beta_note("Reconstructing the original composition runs decay in reverse.")
 
     in_col, out_col = st.columns([2, 3], gap="large")
 
     with in_col:
         with st.container(border=True):
+            _panel_header("rev", "RECONSTRUCT ORIGINAL")
             st.subheader("Input")
             paste_text = _input_text(
                 "rev",
@@ -578,11 +602,15 @@ def _reverse_tab() -> None:
                     )
                 )
                 default_sigma_pct = st.number_input(
-                    "Default measurement uncertainty (%) for lines without one",
+                    "Default uncertainty for lines without one (%, 1σ, as a fraction of the value)",
                     min_value=0.0,
                     max_value=100.0,
                     value=5.0,
-                    help="An assumed seed value so MC runs out of the box — override per line with real measurement precision.",
+                    help=(
+                        "Used only for lines where you didn't give an uncertainty. It's a "
+                        "relative 1-sigma value: 5 means ±5% of that line's value. Give real "
+                        "per-line uncertainties for a trustworthy interval."
+                    ),
                 )
                 coverage_k = _sigma_convention_selector("rev")
             closed_system = st.checkbox(
@@ -644,19 +672,19 @@ def _reverse_tab() -> None:
         canon = st.session_state["rev_canon"]
         result = st.session_state["rev_result"]
 
-        st.subheader(f"Reconstructed composition — reach-back {st.session_state['rev_age_label']}")
+        st.subheader(f"Original composition — {st.session_state['rev_age_label']} earlier")
 
-        # Forward-check verdict first: it overrides everything else.
+        # Self-check verdict first: it overrides everything else.
         if result.forward_check_ok:
             st.success(
-                "Forward check passed: decaying the reconstructed t=0 composition "
-                "forward by the known age reproduces the measured values."
+                "Self-check passed: decaying this reconstructed original composition "
+                "forward again reproduces what you measured today."
             )
         else:
             st.error(
-                "Forward check FAILED: the reconstruction does not reproduce the "
-                "measured input when decayed forward. Treat every value below as "
-                "suspect regardless of its individual flags."
+                "Self-check FAILED: this reconstruction does not reproduce your "
+                "measured values when decayed forward again. Treat every value below "
+                "as unreliable."
             )
 
         # Genuine warnings (bad reconstruction, gates, assumption flags) stay
@@ -664,9 +692,9 @@ def _reverse_tab() -> None:
         # footnote shown after it, so the result reads first.
         footnotes: list[str] = []
         for w in result.warnings:
-            if "conditional on closed-system" in w:
+            if "closed system" in w:
                 footnotes.append(w)
-            elif "Negative reconstructed" in w or "Forward check failed" in w:
+            elif "Negative original amounts" in w or "Self-check failed" in w:
                 st.error(w)
             else:
                 st.warning(w)
@@ -736,18 +764,17 @@ def _age_results_table(canon_today, result) -> pd.DataFrame:
 
 def _age_tab() -> None:
     st.caption(
-        "Mode A: given the composition the sample **started** with and what it "
-        "measures **today**, solve for its age. A weighted least-squares fit of one "
-        "scalar against the trusted forward engine — with Monte Carlo uncertainty, "
-        "resolvability gates, and ambiguity detection. Absolute units only "
-        "(see docs/mode-a-addendum.md)."
+        "You know what a sample was **made from** and what it measures **today**. "
+        "This works out how old it is. You need **both** compositions for this."
     )
+    _beta_note("Working out an age from two compositions is a fit, not a lookup.")
 
     in_col, out_col = st.columns([2, 3], gap="large")
 
     with in_col:
         with st.container(border=True):
-            st.subheader("Known composition at t=0")
+            _panel_header("age", "FIND THE AGE")
+            st.subheader("Original composition (when the sample was made)")
             t0_text = _input_text(
                 "age_t0",
                 "Paste 'nuclide, value[, uncertainty]' — lines without an uncertainty are treated as exact",
@@ -787,11 +814,15 @@ def _age_tab() -> None:
                     )
                 )
                 default_sigma_pct = st.number_input(
-                    "Default measurement uncertainty (%) for today-lines without one",
+                    "Default uncertainty for today-lines without one (%, 1σ, as a fraction of the value)",
                     min_value=0.0,
                     max_value=100.0,
                     value=5.0,
                     key="age_sigma",
+                    help=(
+                        "Used only for today-lines where you didn't give an uncertainty. "
+                        "Relative 1-sigma: 5 means ±5% of the value."
+                    ),
                 )
                 coverage_k = _sigma_convention_selector("age")
 
@@ -855,28 +886,31 @@ def _age_tab() -> None:
         result = st.session_state["age_result"]
         canon_today = st.session_state["age_canon_today"]
 
-        st.subheader("Solved age")
+        st.subheader("Age")
         if not result.resolvable:
-            st.error(
-                "**Not resolvable.** The measurements do not pin an age down "
-                "(see the warnings below). No age is certified."
-            )
-        if math.isfinite(result.age_s_median):
+            # Don't show a misleading age number when we can't actually tell --
+            # explain plainly why instead (the "Can't determine an age" warnings
+            # carry the reason).
+            st.error("**Couldn't work out an age from these numbers.**")
+            reasons = [w for w in result.warnings if "Can't determine an age" in w]
+            for r in reasons:
+                st.markdown(f"- {r.split(':', 1)[1].strip()}")
+        elif math.isfinite(result.age_s_median):
             col_med, col_lo, col_hi = st.columns(3)
             col_med.metric("Median age", age_readable(result.age_s_median))
             col_lo.metric("95% low", age_readable(result.age_s_lo))
             col_hi.metric("95% high", age_readable(result.age_s_hi))
             st.caption(
-                f"Central weighted-least-squares age: {age_readable(result.age_s)}. "
+                f"Best-fit age: {age_readable(result.age_s)}. "
                 + (
                     f"{result.n_trials:,} Monte Carlo trials."
                     if result.n_trials
-                    else "All uncertainties zero — deterministic fit, no MC spread."
+                    else "All uncertainties zero — no spread."
                 )
-                + f" Fit quality chi²/dof = {result.chi2_per_dof:.3g}."
+                + f" Goodness of fit chi²/dof = {result.chi2_per_dof:.3g} (~1 is good)."
             )
             meas_iso = st.session_state.get("age_measurement_date")
-            if meas_iso and result.resolvable and math.isfinite(result.age_s_median):
+            if meas_iso:
                 meas = date.fromisoformat(meas_iso)
                 origin = date_from_age(meas, result.age_s_median)
                 lo = date_from_age(meas, result.age_s_hi)  # older age -> earlier date
@@ -888,21 +922,26 @@ def _age_tab() -> None:
                 )
         if result.ambiguous_ages_s:
             st.warning(
-                "**Ambiguous:** these ages fit comparably — "
+                "**More than one age fits.** These ages all match the measurements "
+                "about equally well: "
                 + ", ".join(age_readable(t) for t in result.ambiguous_ages_s)
+                + ". Measuring another nuclide would break the tie."
             )
 
         for w in result.warnings:
-            if "conditional on closed-system" in w:
+            if "closed system" in w:
                 st.caption(f"ℹ️ {w}")
-            elif "Ambiguous age" in w:
-                continue  # already shown as the headline warning above
-            elif "Not resolvable" in w or "Poor fit" in w:
+            elif "Can't determine an age" in w or "Ambiguous age" in w:
+                continue  # shown above (headline / reasons)
+            elif "Poor fit" in w:
                 st.error(w)
             else:
                 st.warning(w)
 
-        st.markdown("**Forward check at the solved age** (known t=0 decayed forward, vs measured):")
+        st.markdown(
+            "**Self-check** — the original composition decayed forward by the "
+            "best-fit age, compared with what you measured today:"
+        )
         age_table = _age_results_table(canon_today, result)
         st.dataframe(age_table, use_container_width=True, hide_index=True)
         _download_buttons(age_table, "age_forward_check", "age")
@@ -929,8 +968,8 @@ def main() -> None:
     tab_forward, tab_reverse, tab_age = st.tabs(
         [
             "Forward decay",
-            "Reverse — reconstruct t=0 (known age)",
-            "Age — solve for age (known t=0)",
+            "Reconstruct original · beta",
+            "Find the age · beta",
         ]
     )
     with tab_forward:

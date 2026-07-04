@@ -122,7 +122,7 @@ def test_unresolvable_when_nothing_measurably_decays():
         seed=3,
     )
     assert not result.resolvable
-    assert any("Not resolvable" in w for w in result.warnings)
+    assert any("Can't determine an age" in w for w in result.warnings)
 
 
 def test_ambiguous_age_from_single_ingrowth_measurement():

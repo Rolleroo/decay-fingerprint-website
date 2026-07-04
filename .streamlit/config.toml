@@ -2,9 +2,10 @@
 # Spaces).
 
 [server]
-# First-line cap on upload size (MB). app/ingest.py enforces a tighter
-# post-decompression bound as defence in depth.
-maxUploadSize = 10
+# First-line cap on upload size (MB) -- a results table is kilobytes, so 1 MB
+# (Streamlit's practical minimum) is already very generous. app/ingest.py
+# enforces a tighter post-decompression bound as defence in depth.
+maxUploadSize = 1
 
 [browser]
 gatherUsageStats = false

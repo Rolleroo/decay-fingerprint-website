@@ -52,7 +52,7 @@ def test_reverse_tab_reconstructs_and_shows_forward_check():
     # Results table + forward-check table rendered, and the forward check
     # passed for a healthy 1-year reach-back.
     assert len(at.dataframe) >= 2
-    assert any("Forward check passed" in s.value for s in at.success)
+    assert any("Self-check passed" in s.value for s in at.success)
 
 
 def test_age_tab_solves_and_shows_metrics():

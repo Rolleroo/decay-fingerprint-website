@@ -170,7 +170,7 @@ def test_reachback_beyond_gate_is_refused_not_fabricated():
     assert r.half_lives_back > GATE_HALF_LIVES
     assert r.conditioning == "fail"
     assert math.isnan(r.median_atoms)  # shown as not reconstructable, not a number
-    assert any("Not reconstructable" in w for w in result.warnings)
+    assert any("not reconstructable" in w for w in result.warnings)
 
 
 def test_gated_daughter_does_not_taint_its_long_lived_parent():
@@ -215,7 +215,7 @@ def test_inconsistent_input_yields_loud_negative_flag_and_failed_forward_check()
     y = row(result, "Y-90")
     assert y.median_atoms < 0
     assert y.conditioning == "fail"
-    assert any("Negative reconstructed amounts" in w for w in result.warnings)
+    assert any("Negative original amounts" in w for w in result.warnings)
     assert not result.forward_check_ok
     assert row(result, "Sr-90").chain_tainted
 

@@ -223,9 +223,10 @@ def solve_age(
     # --- gate 1: analytical resolvability, before any MC (DQPB pattern) ---
     if float(chi2_grid.max() - chi2_grid.min()) < 1.0:
         warnings.append(
-            "Not resolvable: no measured nuclide changes meaningfully over any "
-            "admissible age, so the input carries no age information at the "
-            "stated uncertainties."
+            "Can't determine an age: none of these nuclides change enough between "
+            "the original and today's composition to measure a decay time. Check "
+            "that today's values really differ from the original — if they're the "
+            "same (or nearly), there's no decay to date."
         )
         k = int(np.argmin(chi2_grid))
         return AgeResult(
@@ -346,14 +347,16 @@ def solve_age(
         if hi_age / max(lo_age, 1e-300) > INTERVAL_SPAN_LIMIT:
             resolvable = False
             warnings.append(
-                f"Not resolvable: the 95% age interval spans more than a factor "
-                f"{INTERVAL_SPAN_LIMIT:g} -- the measurements do not pin the age down."
+                "Can't determine an age: the result is far too uncertain to be "
+                "useful — the ages that fit these numbers span an enormous range."
             )
         if lo_age <= t_lo * 1.5 or hi_age >= t_hi / 1.5:
             resolvable = False
             warnings.append(
-                "Not resolvable: the age interval runs into the edge of the "
-                "searchable window."
+                "Can't determine an age: the best fit sits at the very edge of the "
+                "time range this tool searches. The sample is likely far younger or "
+                "older than these nuclides can reveal, or the two compositions are "
+                "too similar to show measurable decay."
             )
 
     # --- consistency + residual table (this is the forward-check overlay) ---
@@ -363,10 +366,11 @@ def solve_age(
     chi2_per_dof = chi2_final / dof
     if not deterministic and chi2_per_dof > CONSISTENCY_CHI2_PER_DOF:
         warnings.append(
-            f"Poor fit at the best age (chi2/dof = {chi2_per_dof:.1f}): the inputs "
-            f"are not consistent with closed-system decay from the stated t=0 "
-            f"(open system, wrong t=0 composition, or understated uncertainties). "
-            f"The residual table localizes which nuclide misfits."
+            f"Poor fit: the original and today's compositions don't agree on a "
+            f"single age (goodness-of-fit chi²/dof = {chi2_per_dof:.1f}, where ~1 is "
+            f"a good fit). They may not be from the same sample, the sample may have "
+            f"gained or lost material, or the stated uncertainties are too small. "
+            f"The table below shows which nuclide disagrees most."
         )
 
     residuals = _residuals(
@@ -374,8 +378,8 @@ def solve_age(
     )
     if not any(r.informative for r in residuals):
         warnings.append(
-            "No measured nuclide individually constrains the age at its stated "
-            "uncertainty; the solution rests on the combination only."
+            "No single nuclide pins the age down on its own at its stated "
+            "uncertainty — the answer relies on all of them together."
         )
 
     warnings.append(_CLOSED_SYSTEM_NOTE)
@@ -395,8 +399,9 @@ def solve_age(
 
 
 _CLOSED_SYSTEM_NOTE = (
-    "Results are conditional on closed-system behaviour (no gain or loss except "
-    "decay) and on the known t=0 composition being complete for every measured chain."
+    "This result assumes a closed system — nothing was added to or removed from "
+    "the sample except by radioactive decay — and that the original composition "
+    "you gave is complete for every chain measured."
 )
 
 

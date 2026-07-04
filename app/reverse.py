@@ -361,9 +361,12 @@ def reconstruct_t0(
     gated = sorted(n for n in measured if half_lives_back(n) > GATE_HALF_LIVES)
     if gated:
         warnings.append(
-            f"Not reconstructable at this age (reach-back beyond {GATE_HALF_LIVES:g} "
-            f"half-lives; the t=0 amount is no longer encoded in today's value): "
-            f"{', '.join(gated)}. Their entire chains are flagged unreliable."
+            f"These are short-lived compared with the age, so their original amount "
+            f"can no longer be worked out from today's value (more than "
+            f"{GATE_HALF_LIVES:g} half-lives have passed): {', '.join(gated)}. They are "
+            f"shown as 'not reconstructable'. This is normal for short-lived decay "
+            f"products — for a clean result, enter only the nuclides you measured "
+            f"directly, not a full list of decay products."
         )
 
     # --- unmeasured-nuclide split rule (reverse spec Sec 4 engine rules) ---
@@ -642,9 +645,10 @@ def reconstruct_t0(
     ]
     if negative_medians:
         warnings.append(
-            f"Negative reconstructed amounts for {', '.join(negative_medians)} -- the classic "
-            f"signature of a bad reconstruction. The present-day input is inconsistent with "
-            f"pure closed-system decay over this age."
+            f"Negative original amounts for {', '.join(negative_medians)} — that's "
+            f"physically impossible, so something doesn't add up. Usually it means "
+            f"today's measurement can't have come from pure decay over this age "
+            f"(the sample may have gained or lost material, or the age is wrong)."
         )
 
     # --- forward-check overlay (reverse spec Sec 4 output 7, default ON):
@@ -672,15 +676,15 @@ def reconstruct_t0(
                 forward_check_ok = False
         if not forward_check_ok:
             warnings.append(
-                "Forward check failed: decaying the reconstructed t=0 composition forward "
-                "does not reproduce the measured values. The reconstruction is suspect "
-                "regardless of the per-nuclide flags."
+                "Self-check failed: decaying the reconstructed original composition "
+                "forward again does not return today's measured values, so the "
+                "reconstruction is unreliable — treat every value below with caution."
             )
 
     warnings.append(
-        "Results are conditional on closed-system behaviour (no gain or loss except decay) "
-        "and on the interim rule that unlisted nuclides are absent today and that any "
-        "unmeasured parent above the measured set was absent throughout."
+        "This result assumes a closed system — nothing was added to or removed from "
+        "the sample except by radioactive decay — and that any nuclide you did not "
+        "list was absent."
     )
 
     # Preserve topological order for solved rows, then gated ones.
