@@ -352,109 +352,103 @@ def _forward_tab() -> None:
         "Start with a mixture of nuclides and see what it becomes after a chosen "
         "time — including the decay products that build up along the way."
     )
-    in_col, out_col = st.columns([2, 3], gap="large")
-
-    with in_col:
-        with st.container(border=True):
-            _panel_header("fwd", "FORWARD DECAY")
-            st.subheader("Input")
-            paste_text = _input_text(
-                "fwd",
-                "Paste 'nuclide, value' lines (one per line)",
-                PLACEHOLDER_PASTE,
-                height=200,
-            )
-            unit_choice, frac_as_percent = _unit_picker("fwd")
-            target_time_s, time_label, time_error = _interval_input(
-                "fwd",
-                elapsed_label="Decay to",
-                reference_label="Reference date (of the pasted values)",
-                target_label="Decay to date",
-            )
-            run = st.button("Decay", type="primary", key="fwd_run", use_container_width=True)
-
-        # st.button() only returns True on the single rerun triggered by the
-        # click itself -- every subsequent rerun (e.g. from a later widget
-        # interaction) sees run=False. Stash the computed result in
-        # session_state so the table stays in place across those reruns.
-        if run:
-            if time_error:
-                st.error(time_error)
-            parse_result = parse_paste(paste_text)
-            if parse_result.errors:
-                _show_parse_errors(parse_result)
-
-            if not parse_result.entries:
-                if not parse_result.errors:
-                    st.info("Paste at least one 'nuclide, value' line.")
-            elif time_error is None:
-                try:
-                    canon = canonicalize(
-                        parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
-                    )
-                except ValidationError as exc:
-                    st.error(str(exc))
-                    canon = None
-
-                if canon is not None:
-                    st.session_state["canon"] = canon
-                    st.session_state["target_time_s"] = target_time_s
-                    st.session_state["fwd_time_label"] = time_label
-                    # Include a t=0 baseline so the Layer-3 conservation audit
-                    # can check atom conservation; the table shows the last step.
-                    st.session_state["result"] = run_time_series(canon, [0.0, target_time_s])
-
-    with out_col:
-        if "result" not in st.session_state:
-            st.info("Enter a fingerprint on the left and click **Decay** — results appear here.")
-            return
-
-        canon = st.session_state["canon"]
-        result = st.session_state["result"]
-
-        st.subheader(f"Fingerprint after {st.session_state.get('fwd_time_label', '')}")
-
-        apply_filter = st.checkbox("Filter out short-lived nuclides", value=False)
-        if apply_filter:
-            filter_col, filter_unit_col = st.columns(2)
-            with filter_col:
-                filter_value = st.number_input(
-                    "Hide half-life below", min_value=0.0, value=3.0
-                )
-            with filter_unit_col:
-                filter_unit = st.selectbox(
-                    "Filter unit", list(TIME_UNIT_TO_SECONDS), index=3, key="filter_unit"
-                )  # months
-            filter_threshold_s = filter_value * TIME_UNIT_TO_SECONDS[filter_unit]
-            # include_stable=False: when the filter is actually engaged,
-            # stable end-products are cut too, not just short-lived ones.
-            kept_nuclides = filter_nuclides_by_half_life(
-                result, filter_threshold_s, direction="above", include_stable=False
-            )
-        else:
-            kept_nuclides = result.nuclides
-
-        breaches = audit_conservation(result)
-        if breaches:
-            st.error(
-                "**Conservation self-audit failed** — the result violates a law that "
-                "must always hold, so it is likely wrong. Please report this input:\n\n"
-                + "\n".join(f"- {b}" for b in breaches)
-            )
-
-        table = _results_table(canon, result, kept_nuclides)
-        quantity_col = table.columns[-1]  # the numeric quantity column
-        st.dataframe(
-            table,
-            use_container_width=True,
-            hide_index=True,
-            column_config={quantity_col: st.column_config.NumberColumn(format="%.4g")},
+    with st.container(border=True):
+        _panel_header("fwd", "FORWARD DECAY")
+        st.subheader("Input")
+        paste_text = _input_text(
+            "fwd",
+            "Paste 'nuclide, value' lines (one per line)",
+            PLACEHOLDER_PASTE,
+            height=200,
         )
-        _download_buttons(table, "forward_fingerprint", "fwd")
+        unit_choice, frac_as_percent = _unit_picker("fwd")
+        target_time_s, time_label, time_error = _interval_input(
+            "fwd",
+            elapsed_label="Decay to",
+            reference_label="Reference date (of the pasted values)",
+            target_label="Decay to date",
+        )
+        run = st.button("Decay", type="primary", key="fwd_run", use_container_width=True)
 
-        with st.expander("Copy table for Excel"):
-            st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
-            st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
+    # st.button() only returns True on the single rerun triggered by the
+    # click itself -- every subsequent rerun (e.g. from a later widget
+    # interaction) sees run=False. Stash the computed result in
+    # session_state so the table stays in place across those reruns.
+    if run:
+        if time_error:
+            st.error(time_error)
+        parse_result = parse_paste(paste_text)
+        if parse_result.errors:
+            _show_parse_errors(parse_result)
+
+        if not parse_result.entries:
+            if not parse_result.errors:
+                st.info("Paste at least one 'nuclide, value' line.")
+        elif time_error is None:
+            try:
+                canon = canonicalize(
+                    parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
+                )
+            except ValidationError as exc:
+                st.error(str(exc))
+                canon = None
+
+            if canon is not None:
+                st.session_state["canon"] = canon
+                st.session_state["target_time_s"] = target_time_s
+                st.session_state["fwd_time_label"] = time_label
+                # Include a t=0 baseline so the Layer-3 conservation audit
+                # can check atom conservation; the table shows the last step.
+                st.session_state["result"] = run_time_series(canon, [0.0, target_time_s])
+
+    if "result" not in st.session_state:
+        return
+
+    canon = st.session_state["canon"]
+    result = st.session_state["result"]
+
+    st.divider()
+    st.subheader(f"Results — fingerprint after {st.session_state.get('fwd_time_label', '')}")
+
+    apply_filter = st.checkbox("Filter out short-lived nuclides", value=False)
+    if apply_filter:
+        filter_col, filter_unit_col = st.columns(2)
+        with filter_col:
+            filter_value = st.number_input("Hide half-life below", min_value=0.0, value=3.0)
+        with filter_unit_col:
+            filter_unit = st.selectbox(
+                "Filter unit", list(TIME_UNIT_TO_SECONDS), index=3, key="filter_unit"
+            )  # months
+        filter_threshold_s = filter_value * TIME_UNIT_TO_SECONDS[filter_unit]
+        # include_stable=False: when the filter is actually engaged, stable
+        # end-products are cut too, not just short-lived ones.
+        kept_nuclides = filter_nuclides_by_half_life(
+            result, filter_threshold_s, direction="above", include_stable=False
+        )
+    else:
+        kept_nuclides = result.nuclides
+
+    breaches = audit_conservation(result)
+    if breaches:
+        st.error(
+            "**Conservation self-audit failed** — the result violates a law that "
+            "must always hold, so it is likely wrong. Please report this input:\n\n"
+            + "\n".join(f"- {b}" for b in breaches)
+        )
+
+    table = _results_table(canon, result, kept_nuclides)
+    quantity_col = table.columns[-1]  # the numeric quantity column
+    st.dataframe(
+        table,
+        use_container_width=True,
+        hide_index=True,
+        column_config={quantity_col: st.column_config.NumberColumn(format="%.4g")},
+    )
+    _download_buttons(table, "forward_fingerprint", "fwd")
+
+    with st.expander("Copy table for Excel"):
+        st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
+        st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
 
 
 CONDITIONING_BADGE = {"pass": "✅ pass", "marginal": "⚠️ marginal", "fail": "❌ fail"}
@@ -566,179 +560,172 @@ def _reverse_tab() -> None:
     )
     _beta_note("Reconstructing the original composition runs decay in reverse.")
 
-    in_col, out_col = st.columns([2, 3], gap="large")
-
-    with in_col:
-        with st.container(border=True):
-            _panel_header("rev", "RECONSTRUCT ORIGINAL")
-            st.subheader("Input")
-            paste_text = _input_text(
-                "rev",
-                "Paste 'nuclide, value[, uncertainty]' lines (one per line)",
-                PLACEHOLDER_PASTE_REVERSE,
-                height=200,
-                help_text=(
-                    "The uncertainty column is optional: absolute in the same unit "
-                    "('Cs-137, 3.7e9, 1e8' or '3.7e9 ± 1e8') or relative ('3.7e9, 5%'). "
-                    "Lines without one get the default from Advanced options."
+    with st.container(border=True):
+        _panel_header("rev", "RECONSTRUCT ORIGINAL")
+        st.subheader("Input")
+        paste_text = _input_text(
+            "rev",
+            "Paste 'nuclide, value[, uncertainty]' lines (one per line)",
+            PLACEHOLDER_PASTE_REVERSE,
+            height=200,
+            help_text=(
+                "The uncertainty column is optional: absolute in the same unit "
+                "('Cs-137, 3.7e9, 1e8' or '3.7e9 ± 1e8') or relative ('3.7e9, 5%'). "
+                "Lines without one get the default from Advanced options."
+            ),
+        )
+        unit_choice, frac_as_percent = _unit_picker("rev")
+        age_s, age_label, age_error = _interval_input(
+            "rev",
+            elapsed_label="Known age",
+            reference_label="Origin / manufacture date",
+            target_label="Measurement date",
+        )
+        with st.expander("Advanced (Monte Carlo settings)"):
+            n_trials = int(
+                st.number_input(
+                    "Monte Carlo trials",
+                    min_value=1_000,
+                    max_value=500_000,
+                    value=100_000,
+                    step=1_000,
+                    help="10⁵–10⁶ trials is the DQPB-recommended range; 10⁵ runs in seconds.",
+                )
+            )
+            default_sigma_pct = st.number_input(
+                "Default uncertainty for lines without one (%, 1σ, as a fraction of the value)",
+                min_value=0.0,
+                max_value=100.0,
+                value=5.0,
+                help=(
+                    "Used only for lines where you didn't give an uncertainty. It's a "
+                    "relative 1-sigma value: 5 means ±5% of that line's value. Give real "
+                    "per-line uncertainties for a trustworthy interval."
                 ),
             )
-            unit_choice, frac_as_percent = _unit_picker("rev")
-            age_s, age_label, age_error = _interval_input(
-                "rev",
-                elapsed_label="Known age",
-                reference_label="Origin / manufacture date",
-                target_label="Measurement date",
-            )
-            with st.expander("Advanced (Monte Carlo settings)"):
-                n_trials = int(
-                    st.number_input(
-                        "Monte Carlo trials",
-                        min_value=1_000,
-                        max_value=500_000,
-                        value=100_000,
-                        step=1_000,
-                        help="10⁵–10⁶ trials is the DQPB-recommended range; 10⁵ runs in seconds.",
-                    )
-                )
-                default_sigma_pct = st.number_input(
-                    "Default uncertainty for lines without one (%, 1σ, as a fraction of the value)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=5.0,
-                    help=(
-                        "Used only for lines where you didn't give an uncertainty. It's a "
-                        "relative 1-sigma value: 5 means ±5% of that line's value. Give real "
-                        "per-line uncertainties for a trustworthy interval."
-                    ),
-                )
-                coverage_k = _sigma_convention_selector("rev")
-            closed_system = st.checkbox(
-                "I understand these results assume a **closed system**: nothing was added to or "
-                "removed from the sample over the stated age except by radioactive decay. "
-                "The tool cannot detect open-system behaviour.",
-                key="rev_closed",
-            )
-            run = st.button(
-                "Reconstruct t=0", type="primary", disabled=not closed_system,
-                key="rev_run", use_container_width=True,
-            )
-            if not closed_system:
-                st.caption("Acknowledge the closed-system assumption to enable reconstruction.")
-
-        if run:
-            parse_result = parse_paste(paste_text)
-            if parse_result.errors:
-                _show_parse_errors(parse_result)
-
-            if age_error:
-                st.error(age_error)
-            elif age_s is None or age_s <= 0:
-                st.error("The known age must be greater than zero.")
-            elif not parse_result.entries:
-                if not parse_result.errors:
-                    st.info("Paste at least one 'nuclide, value' line.")
-            else:
-                try:
-                    canon = canonicalize(
-                        parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
-                    )
-                except ValidationError as exc:
-                    st.error(str(exc))
-                    canon = None
-
-                if canon is not None:
-                    with st.spinner("Back-solving with Monte Carlo uncertainty..."):
-                        rev_result = reconstruct_from_entries(
-                            parse_result.entries,
-                            canon,
-                            age_s,
-                            default_rel_sigma=default_sigma_pct / 100.0,
-                            n_trials=n_trials,
-                            coverage_k=coverage_k,
-                        )
-                    st.session_state["rev_canon"] = canon
-                    st.session_state["rev_result"] = rev_result
-                    st.session_state["rev_age_label"] = age_label
-
-    with out_col:
-        if "rev_result" not in st.session_state:
-            st.info(
-                "Enter today's measured composition and a known age on the left, then "
-                "click **Reconstruct t=0** — results appear here."
-            )
-            return
-
-        canon = st.session_state["rev_canon"]
-        result = st.session_state["rev_result"]
-
-        st.subheader(f"Original composition — {st.session_state['rev_age_label']} earlier")
-
-        # Self-check verdict first: it overrides everything else.
-        if result.forward_check_ok:
-            st.success(
-                "Self-check passed: decaying this reconstructed original composition "
-                "forward again reproduces what you measured today."
-            )
-        else:
-            st.error(
-                "Self-check FAILED: this reconstruction does not reproduce your "
-                "measured values when decayed forward again. Treat every value below "
-                "as unreliable."
-            )
-
-        # Genuine warnings (bad reconstruction, gates, assumption flags) stay
-        # prominent above the result; the routine closed-system caveat is a
-        # footnote shown after it, so the result reads first.
-        footnotes: list[str] = []
-        for w in result.warnings:
-            if "closed system" in w:
-                footnotes.append(w)
-            elif "Negative original amounts" in w or "Self-check failed" in w:
-                st.error(w)
-            else:
-                st.warning(w)
-
-        table = _reverse_results_table(canon, result)
-        if table.empty:
-            st.info("Nothing to reconstruct (no radioactive nuclides in the input).")
-            return
-        st.dataframe(table, use_container_width=True, hide_index=True)
-        _download_buttons(table, "reconstructed_t0", "rev")
-
-        footnotes.insert(
-            0,
-            (
-                f"{result.n_trials:,} Monte Carlo trials; values are medians with 95% intervals."
-                if result.n_trials
-                else "All uncertainties are zero — deterministic back-solve, no MC spread."
-            )
-            + " 'Conditioning' is numerical stability at this reach-back; 'Assumptions' is a "
-            "separate axis — a green conditioning flag never implies the value is uniquely determined.",
+            coverage_k = _sigma_convention_selector("rev")
+        closed_system = st.checkbox(
+            "I understand these results assume a **closed system**: nothing was added to or "
+            "removed from the sample over the stated age except by radioactive decay. "
+            "The tool cannot detect open-system behaviour.",
+            key="rev_closed",
         )
-        if result.excluded_stable:
-            footnotes.append(
-                "Excluded stable nuclides (carry no timing information and cannot be "
-                f"un-grown): {', '.join(result.excluded_stable)}"
-            )
-        if result.pruned:
-            footnotes.append(
-                "Pruned intermediates (half-life negligible against the reach-back age; "
-                f"decay *through* them is still modelled): {', '.join(result.pruned)}"
-            )
-        for note in footnotes:
-            st.caption(note)
+        run = st.button(
+            "Reconstruct t=0", type="primary", disabled=not closed_system,
+            key="rev_run", use_container_width=True,
+        )
+        if not closed_system:
+            st.caption("Acknowledge the closed-system assumption to enable reconstruction.")
 
-        with st.expander("Forward-check overlay (always computed)", expanded=not result.forward_check_ok):
-            st.caption(
-                "Reconstructed t=0 → decayed forward by the known age → compared against "
-                "what you measured. Mismatch means the result is suspect."
-            )
-            st.dataframe(_reverse_forward_check_table(canon, result), use_container_width=True, hide_index=True)
+    if run:
+        parse_result = parse_paste(paste_text)
+        if parse_result.errors:
+            _show_parse_errors(parse_result)
 
-        with st.expander("Copy table for Excel"):
-            st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
-            st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
+        if age_error:
+            st.error(age_error)
+        elif age_s is None or age_s <= 0:
+            st.error("The known age must be greater than zero.")
+        elif not parse_result.entries:
+            if not parse_result.errors:
+                st.info("Paste at least one 'nuclide, value' line.")
+        else:
+            try:
+                canon = canonicalize(
+                    parse_result.entries, unit_choice, frac_as_percent=frac_as_percent
+                )
+            except ValidationError as exc:
+                st.error(str(exc))
+                canon = None
+
+            if canon is not None:
+                with st.spinner("Back-solving with Monte Carlo uncertainty..."):
+                    rev_result = reconstruct_from_entries(
+                        parse_result.entries,
+                        canon,
+                        age_s,
+                        default_rel_sigma=default_sigma_pct / 100.0,
+                        n_trials=n_trials,
+                        coverage_k=coverage_k,
+                    )
+                st.session_state["rev_canon"] = canon
+                st.session_state["rev_result"] = rev_result
+                st.session_state["rev_age_label"] = age_label
+
+    if "rev_result" not in st.session_state:
+        return
+
+    canon = st.session_state["rev_canon"]
+    result = st.session_state["rev_result"]
+
+    st.divider()
+    st.subheader(f"Results — original composition, {st.session_state['rev_age_label']} earlier")
+
+    # Self-check verdict first: it overrides everything else.
+    if result.forward_check_ok:
+        st.success(
+            "Self-check passed: decaying this reconstructed original composition "
+            "forward again reproduces what you measured today."
+        )
+    else:
+        st.error(
+            "Self-check FAILED: this reconstruction does not reproduce your "
+            "measured values when decayed forward again. Treat every value below "
+            "as unreliable."
+        )
+
+    # Genuine warnings (bad reconstruction, gates, assumption flags) stay
+    # prominent above the result; the routine closed-system caveat is a
+    # footnote shown after it, so the result reads first.
+    footnotes: list[str] = []
+    for w in result.warnings:
+        if "closed system" in w:
+            footnotes.append(w)
+        elif "Negative original amounts" in w or "Self-check failed" in w:
+            st.error(w)
+        else:
+            st.warning(w)
+
+    table = _reverse_results_table(canon, result)
+    if table.empty:
+        st.info("Nothing to reconstruct (no radioactive nuclides in the input).")
+        return
+    st.dataframe(table, use_container_width=True, hide_index=True)
+    _download_buttons(table, "reconstructed_t0", "rev")
+
+    footnotes.insert(
+        0,
+        (
+            f"{result.n_trials:,} Monte Carlo trials; values are medians with 95% intervals."
+            if result.n_trials
+            else "All uncertainties are zero — deterministic back-solve, no MC spread."
+        )
+        + " 'Conditioning' is numerical stability at this reach-back; 'Assumptions' is a "
+        "separate axis — a green conditioning flag never implies the value is uniquely determined.",
+    )
+    if result.excluded_stable:
+        footnotes.append(
+            "Excluded stable nuclides (carry no timing information and cannot be "
+            f"un-grown): {', '.join(result.excluded_stable)}"
+        )
+    if result.pruned:
+        footnotes.append(
+            "Pruned intermediates (half-life negligible against the reach-back age; "
+            f"decay *through* them is still modelled): {', '.join(result.pruned)}"
+        )
+    for note in footnotes:
+        st.caption(note)
+
+    with st.expander("Self-check detail (measured today vs decayed-forward reconstruction)", expanded=not result.forward_check_ok):
+        st.caption(
+            "The reconstructed original composition decayed forward by the known age, "
+            "compared with what you measured today. A mismatch means the result is suspect."
+        )
+        st.dataframe(_reverse_forward_check_table(canon, result), use_container_width=True, hide_index=True)
+
+    with st.expander("Copy table for Excel"):
+        st.caption("Click the copy icon in the corner, then paste directly into a spreadsheet.")
+        st.code(_csv_safe(table).to_csv(sep="\t", index=False), language=None)
 
 
 def _age_results_table(canon_today, result) -> pd.DataFrame:
@@ -769,182 +756,175 @@ def _age_tab() -> None:
     )
     _beta_note("Working out an age from two compositions is a fit, not a lookup.")
 
-    in_col, out_col = st.columns([2, 3], gap="large")
-
-    with in_col:
-        with st.container(border=True):
-            _panel_header("age", "FIND THE AGE")
-            st.subheader("Original composition (when the sample was made)")
-            t0_text = _input_text(
-                "age_t0",
-                "Paste 'nuclide, value[, uncertainty]' — lines without an uncertainty are treated as exact",
-                "Pu-241, 1.0e15\nAm-241, 2.0e13",
-                height=150,
-            )
-            t0_unit, _ = _unit_picker("age_t0")
-
-            st.subheader("Measured composition today")
-            today_text = _input_text(
-                "age_today",
-                "Paste 'nuclide, value[, uncertainty]' — lines without one get the default uncertainty",
-                "Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
-                height=150,
-            )
-            today_unit, _ = _unit_picker("age_today")
-
-            measurement_date = None
-            if st.checkbox(
-                "I have a measurement date (show the implied origin/production date)",
-                key="age_use_date",
-            ):
-                measurement_date = st.date_input(
-                    "Measurement date", value=date.today(), key="age_meas_date", format="YYYY-MM-DD"
-                )
-
-            with st.expander("Advanced (Monte Carlo settings)"):
-                n_trials = int(
-                    st.number_input(
-                        "Monte Carlo trials",
-                        min_value=1_000,
-                        max_value=200_000,
-                        value=20_000,
-                        step=1_000,
-                        key="age_trials",
-                        help="Each trial re-solves the age, so the default is lower than reverse mode's.",
-                    )
-                )
-                default_sigma_pct = st.number_input(
-                    "Default uncertainty for today-lines without one (%, 1σ, as a fraction of the value)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=5.0,
-                    key="age_sigma",
-                    help=(
-                        "Used only for today-lines where you didn't give an uncertainty. "
-                        "Relative 1-sigma: 5 means ±5% of the value."
-                    ),
-                )
-                coverage_k = _sigma_convention_selector("age")
-
-            closed_system = st.checkbox(
-                "I understand the solved age assumes a **closed system** and that the t=0 "
-                "composition is complete for every measured chain.",
-                key="age_closed",
-            )
-            run = st.button(
-                "Solve for age", type="primary", disabled=not closed_system,
-                key="age_run", use_container_width=True,
-            )
-            if not closed_system:
-                st.caption("Acknowledge the assumptions to enable the solve.")
-
-        if run:
-            parse_t0 = parse_paste(t0_text)
-            parse_today = parse_paste(today_text)
-            ok = True
-            for label, parsed in [("t=0", parse_t0), ("today", parse_today)]:
-                if parsed.errors:
-                    st.error(f"Fix the following in the {label} paste:")
-                    for e in parsed.errors:
-                        st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
-                    ok = False
-                elif not parsed.entries:
-                    st.info(f"Paste at least one 'nuclide, value' line for {label}.")
-                    ok = False
-
-            if ok:
-                try:
-                    canon_t0 = canonicalize(parse_t0.entries, t0_unit)
-                    canon_today = canonicalize(parse_today.entries, today_unit)
-                    with st.spinner("Fitting the age with Monte Carlo uncertainty..."):
-                        result = solve_age_from_entries(
-                            parse_t0.entries,
-                            canon_t0,
-                            parse_today.entries,
-                            canon_today,
-                            default_rel_sigma=default_sigma_pct / 100.0,
-                            n_trials=n_trials,
-                            coverage_k=coverage_k,
-                        )
-                except ValidationError as exc:
-                    st.error(str(exc))
-                else:
-                    st.session_state["age_result"] = result
-                    st.session_state["age_canon_today"] = canon_today
-                    st.session_state["age_measurement_date"] = (
-                        measurement_date.isoformat() if measurement_date is not None else None
-                    )
-
-    with out_col:
-        if "age_result" not in st.session_state:
-            st.info(
-                "Enter the known t=0 composition and today's measurement on the left, then "
-                "click **Solve for age** — results appear here."
-            )
-            return
-
-        result = st.session_state["age_result"]
-        canon_today = st.session_state["age_canon_today"]
-
-        st.subheader("Age")
-        if not result.resolvable:
-            # Don't show a misleading age number when we can't actually tell --
-            # explain plainly why instead (the "Can't determine an age" warnings
-            # carry the reason).
-            st.error("**Couldn't work out an age from these numbers.**")
-            reasons = [w for w in result.warnings if "Can't determine an age" in w]
-            for r in reasons:
-                st.markdown(f"- {r.split(':', 1)[1].strip()}")
-        elif math.isfinite(result.age_s_median):
-            col_med, col_lo, col_hi = st.columns(3)
-            col_med.metric("Median age", age_readable(result.age_s_median))
-            col_lo.metric("95% low", age_readable(result.age_s_lo))
-            col_hi.metric("95% high", age_readable(result.age_s_hi))
-            st.caption(
-                f"Best-fit age: {age_readable(result.age_s)}. "
-                + (
-                    f"{result.n_trials:,} Monte Carlo trials."
-                    if result.n_trials
-                    else "All uncertainties zero — no spread."
-                )
-                + f" Goodness of fit chi²/dof = {result.chi2_per_dof:.3g} (~1 is good)."
-            )
-            meas_iso = st.session_state.get("age_measurement_date")
-            if meas_iso:
-                meas = date.fromisoformat(meas_iso)
-                origin = date_from_age(meas, result.age_s_median)
-                lo = date_from_age(meas, result.age_s_hi)  # older age -> earlier date
-                hi = date_from_age(meas, result.age_s_lo)
-                st.info(
-                    f"**Implied origin date:** {origin.isoformat()} "
-                    f"(95% range {lo.isoformat()} – {hi.isoformat()}), "
-                    f"measured on {meas.isoformat()}."
-                )
-        if result.ambiguous_ages_s:
-            st.warning(
-                "**More than one age fits.** These ages all match the measurements "
-                "about equally well: "
-                + ", ".join(age_readable(t) for t in result.ambiguous_ages_s)
-                + ". Measuring another nuclide would break the tie."
-            )
-
-        for w in result.warnings:
-            if "closed system" in w:
-                st.caption(f"ℹ️ {w}")
-            elif "Can't determine an age" in w or "Ambiguous age" in w:
-                continue  # shown above (headline / reasons)
-            elif "Poor fit" in w:
-                st.error(w)
-            else:
-                st.warning(w)
-
-        st.markdown(
-            "**Self-check** — the original composition decayed forward by the "
-            "best-fit age, compared with what you measured today:"
+    with st.container(border=True):
+        _panel_header("age", "FIND THE AGE")
+        st.subheader("Original composition (when the sample was made)")
+        t0_text = _input_text(
+            "age_t0",
+            "Paste 'nuclide, value[, uncertainty]' — lines without an uncertainty are treated as exact",
+            "Pu-241, 1.0e15\nAm-241, 2.0e13",
+            height=150,
         )
-        age_table = _age_results_table(canon_today, result)
-        st.dataframe(age_table, use_container_width=True, hide_index=True)
-        _download_buttons(age_table, "age_forward_check", "age")
+        t0_unit, _ = _unit_picker("age_t0")
+
+        st.subheader("Measured composition today")
+        today_text = _input_text(
+            "age_today",
+            "Paste 'nuclide, value[, uncertainty]' — lines without one get the default uncertainty",
+            "Pu-241, 2.9e14, 3%\nAm-241, 6.8e14 ± 3e13",
+            height=150,
+        )
+        today_unit, _ = _unit_picker("age_today")
+
+        measurement_date = None
+        if st.checkbox(
+            "I have a measurement date (show the implied origin/production date)",
+            key="age_use_date",
+        ):
+            measurement_date = st.date_input(
+                "Measurement date", value=date.today(), key="age_meas_date", format="YYYY-MM-DD"
+            )
+
+        with st.expander("Advanced (Monte Carlo settings)"):
+            n_trials = int(
+                st.number_input(
+                    "Monte Carlo trials",
+                    min_value=1_000,
+                    max_value=200_000,
+                    value=20_000,
+                    step=1_000,
+                    key="age_trials",
+                    help="Each trial re-solves the age, so the default is lower than reverse mode's.",
+                )
+            )
+            default_sigma_pct = st.number_input(
+                "Default uncertainty for today-lines without one (%, 1σ, as a fraction of the value)",
+                min_value=0.0,
+                max_value=100.0,
+                value=5.0,
+                key="age_sigma",
+                help=(
+                    "Used only for today-lines where you didn't give an uncertainty. "
+                    "Relative 1-sigma: 5 means ±5% of the value."
+                ),
+            )
+            coverage_k = _sigma_convention_selector("age")
+
+        closed_system = st.checkbox(
+            "I understand the solved age assumes a **closed system** and that the t=0 "
+            "composition is complete for every measured chain.",
+            key="age_closed",
+        )
+        run = st.button(
+            "Solve for age", type="primary", disabled=not closed_system,
+            key="age_run", use_container_width=True,
+        )
+        if not closed_system:
+            st.caption("Acknowledge the assumptions to enable the solve.")
+
+    if run:
+        parse_t0 = parse_paste(t0_text)
+        parse_today = parse_paste(today_text)
+        ok = True
+        for label, parsed in [("t=0", parse_t0), ("today", parse_today)]:
+            if parsed.errors:
+                st.error(f"Fix the following in the {label} paste:")
+                for e in parsed.errors:
+                    st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
+                ok = False
+            elif not parsed.entries:
+                st.info(f"Paste at least one 'nuclide, value' line for {label}.")
+                ok = False
+
+        if ok:
+            try:
+                canon_t0 = canonicalize(parse_t0.entries, t0_unit)
+                canon_today = canonicalize(parse_today.entries, today_unit)
+                with st.spinner("Fitting the age with Monte Carlo uncertainty..."):
+                    result = solve_age_from_entries(
+                        parse_t0.entries,
+                        canon_t0,
+                        parse_today.entries,
+                        canon_today,
+                        default_rel_sigma=default_sigma_pct / 100.0,
+                        n_trials=n_trials,
+                        coverage_k=coverage_k,
+                    )
+            except ValidationError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["age_result"] = result
+                st.session_state["age_canon_today"] = canon_today
+                st.session_state["age_measurement_date"] = (
+                    measurement_date.isoformat() if measurement_date is not None else None
+                )
+
+    if "age_result" not in st.session_state:
+        return
+
+    result = st.session_state["age_result"]
+    canon_today = st.session_state["age_canon_today"]
+
+    st.divider()
+    st.subheader("Results — age")
+    if not result.resolvable:
+        # Don't show a misleading age number when we can't actually tell --
+        # explain plainly why instead (the "Can't determine an age" warnings
+        # carry the reason).
+        st.error("**Couldn't work out an age from these numbers.**")
+        reasons = [w for w in result.warnings if "Can't determine an age" in w]
+        for r in reasons:
+            st.markdown(f"- {r.split(':', 1)[1].strip()}")
+    elif math.isfinite(result.age_s_median):
+        col_med, col_lo, col_hi = st.columns(3)
+        col_med.metric("Median age", age_readable(result.age_s_median))
+        col_lo.metric("95% low", age_readable(result.age_s_lo))
+        col_hi.metric("95% high", age_readable(result.age_s_hi))
+        st.caption(
+            f"Best-fit age: {age_readable(result.age_s)}. "
+            + (
+                f"{result.n_trials:,} Monte Carlo trials."
+                if result.n_trials
+                else "All uncertainties zero — no spread."
+            )
+            + f" Goodness of fit chi²/dof = {result.chi2_per_dof:.3g} (~1 is good)."
+        )
+        meas_iso = st.session_state.get("age_measurement_date")
+        if meas_iso:
+            meas = date.fromisoformat(meas_iso)
+            origin = date_from_age(meas, result.age_s_median)
+            lo = date_from_age(meas, result.age_s_hi)  # older age -> earlier date
+            hi = date_from_age(meas, result.age_s_lo)
+            st.info(
+                f"**Implied origin date:** {origin.isoformat()} "
+                f"(95% range {lo.isoformat()} – {hi.isoformat()}), "
+                f"measured on {meas.isoformat()}."
+            )
+    if result.ambiguous_ages_s:
+        st.warning(
+            "**More than one age fits.** These ages all match the measurements "
+            "about equally well: "
+            + ", ".join(age_readable(t) for t in result.ambiguous_ages_s)
+            + ". Measuring another nuclide would break the tie."
+        )
+
+    for w in result.warnings:
+        if "closed system" in w:
+            st.caption(f"ℹ️ {w}")
+        elif "Can't determine an age" in w or "Ambiguous age" in w:
+            continue  # shown above (headline / reasons)
+        elif "Poor fit" in w:
+            st.error(w)
+        else:
+            st.warning(w)
+
+    st.markdown(
+        "**Self-check** — the original composition decayed forward by the "
+        "best-fit age, compared with what you measured today:"
+    )
+    age_table = _age_results_table(canon_today, result)
+    st.dataframe(age_table, use_container_width=True, hide_index=True)
+    _download_buttons(age_table, "age_forward_check", "age")
 
 
 def main() -> None:
