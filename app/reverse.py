@@ -511,13 +511,13 @@ def reconstruct_t0(
         notes = []
         if not math.isfinite(median):
             conditioning = "fail"
-            notes.append("non-finite reconstruction")
+            notes.append("no finite amount could be reconstructed")
         elif median < 0 and hi[i] < 0:
             # Confidently negative (the whole 95% interval is below zero):
             # the genuine bad-reconstruction signature -- the input is
             # inconsistent with pure decay over this age.
             conditioning = "fail"
-            notes.append("negative reconstructed amount (bad-reconstruction signature)")
+            notes.append("reconstructs to a negative amount — not consistent with pure decay over this age")
         elif median < 0:
             # Median negative but the interval straddles zero: consistent
             # with ~zero at t=0. This is the *expected* result for an
@@ -525,18 +525,18 @@ def reconstruct_t0(
             # it is not a failure -- flag it as marginal and do not let it
             # taint its parent chain (refinement 2026-07-03).
             conditioning = "marginal"
-            notes.append("consistent with zero at t=0 (likely absent / in-grown daughter)")
+            notes.append("consistent with none present originally (likely an in-grown daughter)")
         elif rel_width > REL_WIDTH_MARGINAL:
             conditioning = "fail"
-            notes.append(f"95% interval spans +/-{rel_width:.0%} of the median")
+            notes.append(f"95% interval is ±{rel_width:.0%} of the value")
         elif rel_width > REL_WIDTH_PASS or hlb > HALF_LIVES_MARGINAL or neg_frac[i] > NEG_FRACTION_MARGINAL:
             conditioning = "marginal"
             if rel_width > REL_WIDTH_PASS:
-                notes.append(f"95% interval spans +/-{rel_width:.0%} of the median")
+                notes.append(f"95% interval is ±{rel_width:.0%} of the value")
             if hlb > HALF_LIVES_MARGINAL:
-                notes.append(f"{hlb:.1f} half-lives of reach-back")
+                notes.append(f"{hlb:.1f} half-lives back")
             if neg_frac[i] > NEG_FRACTION_MARGINAL:
-                notes.append(f"{neg_frac[i]:.0%} of MC trials went negative")
+                notes.append(f"{neg_frac[i]:.0%} of Monte Carlo trials went negative")
         else:
             conditioning = "pass"
 
@@ -575,8 +575,8 @@ def reconstruct_t0(
                 negative_fraction=0.0,
                 conditioning="fail",
                 conditioning_note=(
-                    f"{hlb:.0f} half-lives of reach-back exceeds the "
-                    f"{GATE_HALF_LIVES:g} half-life resolvability gate"
+                    f"{hlb:.0f} half-lives back — too far to trace reliably "
+                    f"(limit {GATE_HALF_LIVES:g} half-lives)"
                 ),
                 assumed=False,
                 assumption_dependent=dependent,

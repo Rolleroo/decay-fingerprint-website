@@ -480,7 +480,7 @@ def _reverse_display_scale(canon, rows) -> float:
 
 def _reverse_results_table(canon, result) -> pd.DataFrame:
     scale = _reverse_display_scale(canon, result.rows)
-    quantity_label = f"t=0 {_quantity_column_label(canon)}"
+    quantity_label = f"Original {_quantity_column_label(canon)}"
 
     rows = []
     for r in result.rows:
@@ -512,8 +512,8 @@ def _reverse_results_table(canon, result) -> pd.DataFrame:
                 "Half-life": half_life_readable(r.nuclide),
                 quantity_label: _fmt(median),
                 "95% interval": f"{_fmt(lo)} – {_fmt(hi)}",
-                "Reach-back (half-lives)": f"{r.half_lives_back:.3g}",
-                "Conditioning": conditioning,
+                "Half-lives back": f"{r.half_lives_back:.3g}",
+                "Confidence": conditioning,
                 "Reliability": reliability,
                 "Assumptions": assumption,
             }
@@ -542,7 +542,7 @@ def _reverse_forward_check_table(canon, result) -> pd.DataFrame:
             {
                 "Nuclide": row.nuclide,
                 f"Measured today ({unit_label})": _fmt(display(row.nuclide, row.measured_atoms)),
-                f"Reconstructed t=0 → forward ({unit_label})": _fmt(display(row.nuclide, row.modeled_atoms)),
+                f"Reconstruction decayed forward ({unit_label})": _fmt(display(row.nuclide, row.modeled_atoms)),
                 "Mismatch": (
                     f"{row.rel_diff:+.2%}"
                     if math.isfinite(row.rel_diff)
@@ -611,7 +611,7 @@ def _reverse_tab() -> None:
             key="rev_closed",
         )
         run = st.button(
-            "Reconstruct t=0", type="primary", disabled=not closed_system,
+            "Reconstruct original", type="primary", disabled=not closed_system,
             key="rev_run", use_container_width=True,
         )
         if not closed_system:
@@ -698,20 +698,23 @@ def _reverse_tab() -> None:
         (
             f"{result.n_trials:,} Monte Carlo trials; values are medians with 95% intervals."
             if result.n_trials
-            else "All uncertainties are zero — deterministic back-solve, no MC spread."
+            else "All uncertainties are zero — a single exact back-solve, no Monte Carlo spread."
         )
-        + " 'Conditioning' is numerical stability at this reach-back; 'Assumptions' is a "
-        "separate axis — a green conditioning flag never implies the value is uniquely determined.",
+        + " 'Confidence' shows how firmly each amount is fixed this far back — small "
+        "measurement errors grow the further back in time you reconstruct. It is a "
+        "separate question from 'Assumptions': good confidence never means the value is "
+        "certain, only that it is well pinned down by the numbers you gave.",
     )
     if result.excluded_stable:
         footnotes.append(
-            "Excluded stable nuclides (carry no timing information and cannot be "
-            f"un-grown): {', '.join(result.excluded_stable)}"
+            "Excluded stable nuclides (they don't decay, so they carry no timing "
+            f"information and can't be traced back): {', '.join(result.excluded_stable)}"
         )
     if result.pruned:
         footnotes.append(
-            "Pruned intermediates (half-life negligible against the reach-back age; "
-            f"decay *through* them is still modelled): {', '.join(result.pruned)}"
+            "Skipped short-lived intermediates (half-life negligible next to the age, so "
+            f"they'd have long since decayed; decay *through* them is still modelled): "
+            f"{', '.join(result.pruned)}"
         )
     for note in footnotes:
         st.caption(note)
@@ -737,7 +740,7 @@ def _age_results_table(canon_today, result) -> pd.DataFrame:
                 "Nuclide": r.nuclide,
                 "Half-life": half_life_readable(r.nuclide),
                 f"Measured today ({unit_label})": _fmt(atoms_to_display(r.nuclide, r.measured_atoms, canon_today)),
-                f"t=0 → forward at solved age ({unit_label})": _fmt(atoms_to_display(r.nuclide, r.modeled_atoms, canon_today)),
+                f"Modeled at the solved age ({unit_label})": _fmt(atoms_to_display(r.nuclide, r.modeled_atoms, canon_today)),
                 "Mismatch": (
                     f"{r.mismatch_rel:+.2%} ({r.mismatch_sigma:+.1f}σ)"
                     if math.isfinite(r.mismatch_rel)
@@ -811,8 +814,8 @@ def _age_tab() -> None:
             coverage_k = _sigma_convention_selector("age")
 
         closed_system = st.checkbox(
-            "I understand the solved age assumes a **closed system** and that the t=0 "
-            "composition is complete for every measured chain.",
+            "I understand the solved age assumes a **closed system** and that the "
+            "**original composition** is complete for every measured chain.",
             key="age_closed",
         )
         run = st.button(
@@ -826,7 +829,7 @@ def _age_tab() -> None:
         parse_t0 = parse_paste(t0_text)
         parse_today = parse_paste(today_text)
         ok = True
-        for label, parsed in [("t=0", parse_t0), ("today", parse_today)]:
+        for label, parsed in [("original", parse_t0), ("today", parse_today)]:
             if parsed.errors:
                 st.error(f"Fix the following in the {label} paste:")
                 for e in parsed.errors:
@@ -986,13 +989,13 @@ def main() -> None:
             "3. **Enter the known age** of the sample.\n"
             "4. **Acknowledge the closed-system assumption** and click Reconstruct.\n"
             "5. **Read the flags, not just the numbers.** Every nuclide is shown — "
-            "none are withheld — but 'Conditioning' tells you whether the back-solve "
-            "is numerically trustworthy at this reach-back, 'Assumptions' tells you "
+            "none are withheld — but 'Confidence' tells you how firmly the back-solve "
+            "fixes each amount this far back, 'Assumptions' tells you "
             "what the value depends on that wasn't measured, and if any member of a "
             "decay chain fails, the whole chain is flagged. The forward-check overlay "
             "re-decays the answer to verify it reproduces your input.\n\n"
             "**Age (Mode A)** — how old is this sample, given I know what it started as?\n\n"
-            "1. **Paste the known t=0 composition** (e.g. as manufactured/certified) — "
+            "1. **Paste the known original composition** (e.g. as manufactured/certified) — "
             "lines are treated as exact unless you add an uncertainty column.\n"
             "2. **Paste today's measured composition** — lines without an uncertainty "
             "get the configurable default. Absolute units only (no fractions).\n"
