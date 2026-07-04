@@ -3,7 +3,7 @@ parsing.py, conversions.py, engine.py, reverse.py, age_solve.py, plus the
 ingest.py / dates.py helpers -- this module only wires widgets to those
 modules and renders the results.
 
-Three tabs share one interface style (paste OR upload a fingerprint, pick a
+Four tabs share one interface style (paste OR upload a fingerprint, pick a
 unit; give a time as an interval OR a pair of dates):
 
 - Forward decay: single time point; table of the decayed composition.
@@ -12,6 +12,10 @@ unit; give a time as an interval OR a pair of dates):
   forward-check overlay.
 - Age (Mode A): known t=0 composition; solve for the age by weighted
   least squares against the forward engine (docs/mode-a-addendum.md).
+- Compatibility check: assumed t=0 composition AND assumed age both fixed;
+  a zero-free-parameter goodness-of-fit test of the measurement against the
+  forward prediction (age_solve.check_compatibility), plus a scale-free
+  ratio/pattern score.
 
 Shared input conveniences (added 2026-07-03): CSV/XLSX upload alongside the
 paste box (app.ingest), date-mode time entry (app.dates), a coverage-factor
@@ -28,7 +32,11 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
-from app.age_solve import age_readable, solve_age_from_entries
+from app.age_solve import (
+    age_readable,
+    check_compatibility_from_entries,
+    solve_age_from_entries,
+)
 from app.conversions import UNIT_GROUPS, ValidationError, canonicalize, scale_to_display
 from app.dates import DateError, date_from_age, forward_interval_seconds
 from app.engine import (
@@ -325,7 +333,7 @@ def _show_parse_errors(parse_result) -> None:
 
 
 # Distinct accent colour per tab so it's obvious which one you're on.
-TAB_COLOURS = {"fwd": "#2b6777", "rev": "#8a5a2b", "age": "#4a4a7a"}
+TAB_COLOURS = {"fwd": "#2b6777", "rev": "#8a5a2b", "age": "#4a4a7a", "cmp": "#7a3b5a"}
 
 
 def _panel_header(colour_key: str, label: str) -> None:
@@ -930,6 +938,198 @@ def _age_tab() -> None:
     _download_buttons(age_table, "age_forward_check", "age")
 
 
+# Verdict badge: emoji, label, and the st.* level used to colour the box.
+_VERDICT_DISPLAY = {
+    "compatible": ("✅", "Compatible", "success"),
+    "marginal": ("⚠️", "In tension", "warning"),
+    "incompatible": ("❌", "Not compatible", "error"),
+    "n/a": ("—", "Not testable", "info"),
+}
+
+
+def _fmt_p(p: float) -> str:
+    if not math.isfinite(p):
+        return "—"
+    return "< 0.0001" if p < 1e-4 else f"{p:.3g}"
+
+
+def _compat_results_table(canon_today, result) -> pd.DataFrame:
+    unit_label = _quantity_column_label(canon_today)
+    rows = []
+    for r in result.residuals:
+        rows.append(
+            {
+                "Nuclide": r.nuclide,
+                "Half-life": half_life_readable(r.nuclide),
+                f"Measured today ({unit_label})": _fmt(
+                    atoms_to_display(r.nuclide, r.measured_atoms, canon_today)
+                ),
+                f"Assumed, decayed forward ({unit_label})": _fmt(
+                    atoms_to_display(r.nuclide, r.modeled_atoms, canon_today)
+                ),
+                "Mismatch": (
+                    f"{r.mismatch_rel:+.2%}"
+                    if math.isfinite(r.mismatch_rel)
+                    else "∞ (measured 0)"
+                ),
+                "Pull": f"{r.mismatch_sigma:+.1f}σ",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _compat_tab() -> None:
+    st.caption(
+        "You have a **hypothesis**: this sample started as a particular composition "
+        "and is a particular age. This checks whether today's measurement backs that "
+        "up — no age is solved, the age and starting point are both things you assert."
+    )
+    _beta_note("Checking a hypothesis scores your measurement against one fixed prediction.")
+
+    with st.container(border=True):
+        _panel_header("cmp", "COMPATIBILITY CHECK")
+        st.subheader("Assumed original composition")
+        t0_text = _input_text(
+            "cmp_t0",
+            "Paste 'nuclide, value' — the composition you believe the sample started as",
+            "Cs-137, 1.0e15\nSr-90, 4.0e14",
+            height=140,
+        )
+        t0_unit, _ = _unit_picker("cmp_t0")
+
+        age_s, age_label, age_error = _interval_input(
+            "cmp",
+            elapsed_label="Assumed age",
+            reference_label="Assumed origin / manufacture date",
+            target_label="Measurement date",
+        )
+
+        st.subheader("Measured composition today")
+        today_text = _input_text(
+            "cmp_today",
+            "Paste 'nuclide, value[, uncertainty]' — what the sample measures now",
+            "Cs-137, 5.0e14, 3%\nSr-90, 2.1e14, 3%",
+            height=140,
+        )
+        today_unit, _ = _unit_picker("cmp_today")
+
+        with st.expander("Advanced (uncertainty settings)"):
+            default_sigma_pct = st.number_input(
+                "Default uncertainty for today-lines without one (%, 1σ, as a fraction of the value)",
+                min_value=0.0,
+                max_value=100.0,
+                value=5.0,
+                key="cmp_sigma",
+                help=(
+                    "Used only for today-lines where you didn't give an uncertainty. "
+                    "The check weighs each mismatch against this: a tight uncertainty "
+                    "makes the test strict, a loose one makes it forgiving."
+                ),
+            )
+            coverage_k = _sigma_convention_selector("cmp")
+
+        closed_system = st.checkbox(
+            "I understand this check assumes a **closed system** and that the assumed "
+            "original composition is complete for every measured chain.",
+            key="cmp_closed",
+        )
+        run = st.button(
+            "Check compatibility", type="primary", disabled=not closed_system,
+            key="cmp_run", use_container_width=True,
+        )
+        if not closed_system:
+            st.caption("Acknowledge the assumptions to enable the check.")
+
+    if run:
+        parse_t0 = parse_paste(t0_text)
+        parse_today = parse_paste(today_text)
+        ok = True
+        if age_error:
+            st.error(age_error)
+            ok = False
+        elif age_s is None or age_s <= 0:
+            st.error("The assumed age must be greater than zero.")
+            ok = False
+        for label, parsed in [("original", parse_t0), ("today", parse_today)]:
+            if parsed.errors:
+                st.error(f"Fix the following in the {label} paste:")
+                for e in parsed.errors:
+                    st.text(f"Line {e.line_no}: {e.raw!r} -- {e.message}")
+                ok = False
+            elif not parsed.entries:
+                st.info(f"Paste at least one 'nuclide, value' line for {label}.")
+                ok = False
+
+        if ok:
+            try:
+                canon_t0 = canonicalize(parse_t0.entries, t0_unit)
+                canon_today = canonicalize(parse_today.entries, today_unit)
+                result = check_compatibility_from_entries(
+                    canon_t0,
+                    parse_today.entries,
+                    canon_today,
+                    age_s,
+                    default_rel_sigma=default_sigma_pct / 100.0,
+                    coverage_k=coverage_k,
+                )
+            except ValidationError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["cmp_result"] = result
+                st.session_state["cmp_canon_today"] = canon_today
+                st.session_state["cmp_age_label"] = age_label
+
+    if "cmp_result" not in st.session_state:
+        return
+
+    result = st.session_state["cmp_result"]
+    canon_today = st.session_state["cmp_canon_today"]
+    age_label = st.session_state["cmp_age_label"]
+
+    st.divider()
+    st.subheader("Results — compatibility")
+
+    emoji, label, level = _VERDICT_DISPLAY[result.verdict]
+    getattr(st, level)(
+        f"{emoji} **As entered (exact amounts): {label}.** "
+        f"Today's measurement is scored against the assumed original aged by {age_label}."
+    )
+    st.caption(
+        f"Goodness of fit chi²/dof = {result.chi2_per_dof:.3g} (~1 is a good match); "
+        f"p = {_fmt_p(result.p_value)} across {result.dof} measured "
+        f"nuclide{'s' if result.dof != 1 else ''} (p is the chance of a mismatch this "
+        "large from measurement scatter alone — small p argues against the hypothesis)."
+    )
+
+    if result.ratio_testable:
+        r_emoji, r_label, _ = _VERDICT_DISPLAY[result.verdict_scaled]
+        off = result.scale - 1.0
+        st.markdown(
+            f"{r_emoji} **As a pattern / ratio ({r_label.lower()}):** with the overall "
+            f"amount left free, the best-fit scale is **{result.scale:.3g}×** "
+            f"(assumed amounts {off:+.0%} overall), and the isotopic *pattern* fits at "
+            f"chi²/dof = {result.chi2_per_dof_scaled:.3g}, p = {_fmt_p(result.p_value_scaled)}. "
+            "Use this line when you trust the ratios but not the absolute quantities."
+        )
+
+    for w in result.warnings:
+        if "closed system" in w:
+            st.caption(f"ℹ️ {w}")
+        elif "cannot arise" in w:
+            st.error(w)
+        else:
+            st.warning(w)
+
+    st.markdown(
+        "**Per-nuclide detail** — measured today vs the assumed original decayed "
+        "forward by the assumed age. 'Pull' is the mismatch in units of its "
+        "uncertainty (±1σ is a normal miss, beyond ±3σ is a real disagreement):"
+    )
+    table = _compat_results_table(canon_today, result)
+    st.dataframe(table, use_container_width=True, hide_index=True)
+    _download_buttons(table, "compatibility_check", "cmp")
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Decay Fingerprint Tool", page_icon="☢️", layout="wide"
@@ -948,11 +1148,12 @@ def main() -> None:
     )
     st.divider()
 
-    tab_forward, tab_reverse, tab_age = st.tabs(
+    tab_forward, tab_reverse, tab_age, tab_compat = st.tabs(
         [
             "Forward decay",
             "Reconstruct original · beta",
             "Find the age · beta",
+            "Compatibility check · beta",
         ]
     )
     with tab_forward:
@@ -961,6 +1162,8 @@ def main() -> None:
         _reverse_tab()
     with tab_age:
         _age_tab()
+    with tab_compat:
+        _compat_tab()
 
     st.divider()
     with st.expander("How to use this tool"):
@@ -1005,6 +1208,19 @@ def main() -> None:
             "actually constrains the age), plus loud flags when the age is not "
             "resolvable, when two ages fit equally well, or when the inputs are "
             "inconsistent with closed-system decay.\n\n"
+            "**Compatibility check** — I already have a theory (started as *this*, is "
+            "*this* old); does the measurement back it up?\n\n"
+            "1. **Paste the assumed original composition** and pick its unit.\n"
+            "2. **Enter the assumed age** (elapsed or by dates).\n"
+            "3. **Paste today's measured composition** with uncertainties, and pick its unit.\n"
+            "4. **Acknowledge the assumptions** and click Check compatibility.\n"
+            "5. **Read the verdict.** Nothing is solved — the assumed original is decayed "
+            "forward by the assumed age and scored against the measurement with zero free "
+            "parameters. You get a plain compatible / in-tension / not-compatible verdict "
+            "with a goodness-of-fit and p-value, a second verdict for the *ratio/pattern* "
+            "alone (overall amount fitted out, so you can trust ratios without absolute "
+            "quantities), a loud flag for any measured nuclide the assumed origin can't "
+            "produce, and a per-nuclide table with each mismatch as a pull in σ.\n\n"
             "**Copy table for Excel** — open that section and click the copy icon to "
             "grab the results as tab-separated text ready to paste into a spreadsheet.\n\n"
             "**Shared conveniences (all tabs):**\n"

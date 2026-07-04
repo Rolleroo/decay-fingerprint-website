@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import radioactivedecay as rd
 from scipy.optimize import minimize_scalar
+from scipy.stats import chi2 as _chi2_dist
 
 from app.conversions import CanonResult, ValidationError
 from app.engine import is_stable, nuclide_half_life_s
@@ -471,4 +472,195 @@ def solve_age_from_entries(
         default_rel_sigma=default_rel_sigma,
         n_trials=n_trials,
         seed=seed,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Compatibility check: assumed original composition + assumed age, is today's
+# measurement compatible? Both age and t=0 are fixed, so this is a pure
+# goodness-of-fit test with zero free parameters (dof = number of measured
+# nuclides) -- one forward decay, no solve. It reuses the same forward engine,
+# producibility closure, and residual machinery as the age solve. A second,
+# scale-free score answers the *ratio/pattern* question (is the isotopic
+# pattern right, whatever the overall amount?) with the overall level fitted
+# out in closed form (dof = n - 1).
+# ---------------------------------------------------------------------------
+
+# p-value thresholds for the plain-language verdict. p is the probability of a
+# chi-squared this large from measurement scatter alone: high p -> the data are
+# consistent with the hypothesis; very low p -> the hypothesis is rejected.
+COMPAT_P_COMPATIBLE = 0.05
+COMPAT_P_INCOMPATIBLE = 1e-3
+
+
+@dataclass(frozen=True)
+class CompatResult:
+    age_s: float
+    n_fit: int
+    # absolute-amount hypothesis (overall scale = 1, zero free parameters)
+    chi2: float
+    dof: int
+    chi2_per_dof: float
+    p_value: float
+    verdict: str  # 'compatible' | 'marginal' | 'incompatible'
+    # ratio / pattern hypothesis (overall scale fitted out, dof = n - 1)
+    ratio_testable: bool
+    scale: float  # best-fit overall multiplier on the assumed amounts
+    chi2_scaled: float
+    dof_scaled: int
+    chi2_per_dof_scaled: float
+    p_value_scaled: float
+    verdict_scaled: str
+    residuals: list[ResidualRow]
+    excluded_unproducible: list[str]
+    warnings: list[str] = field(default_factory=list)
+
+
+def _compat_verdict(p: float) -> str:
+    if not math.isfinite(p):
+        return "n/a"
+    if p >= COMPAT_P_COMPATIBLE:
+        return "compatible"
+    if p >= COMPAT_P_INCOMPATIBLE:
+        return "marginal"
+    return "incompatible"
+
+
+def check_compatibility(
+    canon_t0: CanonResult,
+    canon_today: CanonResult,
+    age_s: float,
+    sigma_atoms_today: dict[str, float] | None = None,
+    default_rel_sigma: float = 0.05,
+) -> CompatResult:
+    """Test whether today's measurement is compatible with the assumed
+    original composition aged by ``age_s``. Decays the original forward once
+    and scores the measurement against it with zero free parameters (the
+    absolute-amount hypothesis), plus a scale-free score (the ratio/pattern
+    hypothesis). Sigmas are 1-sigma absolute uncertainties in atoms; measured
+    nuclides missing from ``sigma_atoms_today`` get ``default_rel_sigma`` times
+    their value.
+    """
+    _guard_canon(canon_t0, "original")
+    _guard_canon(canon_today, "present-day")
+    if not (math.isfinite(age_s) and age_s > 0):
+        raise ValidationError("The assumed age must be a positive amount of time.")
+
+    warnings: list[str] = []
+    atoms_t0 = measured_atoms_from_canon(canon_t0)
+    atoms_today = measured_atoms_from_canon(canon_today)
+
+    sigma_atoms_today = dict(sigma_atoms_today or {})
+    for n, v in atoms_today.items():
+        sigma_atoms_today.setdefault(n, default_rel_sigma * v)
+
+    # Producibility: a measured nuclide outside the assumed original's decay
+    # closure cannot arise from it at any age -- unlike the age solve (where it
+    # is merely uninformative), here it is direct evidence *against* the
+    # hypothesis, so it is flagged loudly as well as left out of the score.
+    closure = set(atoms_t0)
+    for n in atoms_t0:
+        closure |= descendants(n)
+    excluded = sorted(n for n in atoms_today if n not in closure)
+    if excluded:
+        warnings.append(
+            f"Measured nuclide(s) {', '.join(excluded)} cannot arise from the assumed "
+            f"original composition at any age. On their own they make the sample "
+            f"incompatible with this origin — unless the original composition you "
+            f"entered is incomplete. They are left out of the score below."
+        )
+    fit_nuclides = sorted(n for n in atoms_today if n in closure)
+    if not fit_nuclides:
+        raise ValidationError(
+            "None of the measured nuclides could have come from the assumed original "
+            "composition, so there is nothing to compare — the sample is incompatible "
+            "with this origin (or the original composition is incomplete)."
+        )
+
+    base_inv = rd.Inventory(
+        {n: v for n, v in atoms_t0.items() if v > 0} or dict(atoms_t0), "num"
+    )
+    decayed = base_inv.decay(float(age_s), "s")
+    modeled = {str(k): float(v) for k, v in decayed.numbers().items()}
+
+    m = np.array([atoms_today[n] for n in fit_nuclides])
+    f = np.array([modeled.get(n, 0.0) for n in fit_nuclides])
+    sigma = np.array([sigma_atoms_today[n] for n in fit_nuclides])
+    # Same per-nuclide floor as the age solve: stands in only where a measured
+    # value was given as exact (sigma = 0), keyed to the value itself.
+    measured_scale = max(float(m.max(initial=0.0)), 1.0)
+    floor = SIGMA_FLOOR_REL * np.where(m > 0, m, measured_scale)
+    sigma_eff = np.where(sigma > 0, sigma, floor)
+
+    # --- absolute-amount hypothesis: scale fixed at 1, zero free parameters ---
+    chi2 = float(np.sum(((m - f) / sigma_eff) ** 2))
+    dof = len(fit_nuclides)
+    p_value = float(_chi2_dist.sf(chi2, dof))
+    verdict = _compat_verdict(p_value)
+
+    # --- ratio / pattern hypothesis: fit the one overall scale in closed form ---
+    weight = float(np.sum((f / sigma_eff) ** 2))
+    ratio_testable = len(fit_nuclides) >= 2 and weight > 0.0
+    if ratio_testable:
+        scale = float(np.sum(m * f / sigma_eff**2) / weight)
+        chi2_scaled = float(np.sum(((m - scale * f) / sigma_eff) ** 2))
+        dof_scaled = len(fit_nuclides) - 1
+        p_value_scaled = float(_chi2_dist.sf(chi2_scaled, dof_scaled))
+        verdict_scaled = _compat_verdict(p_value_scaled)
+    else:
+        scale = math.nan
+        chi2_scaled = math.nan
+        dof_scaled = 0
+        p_value_scaled = math.nan
+        verdict_scaled = "n/a"
+
+    residuals = _residuals(fit_nuclides, m, sigma_eff, modeled, math.nan)
+    warnings.append(_CLOSED_SYSTEM_NOTE)
+
+    return CompatResult(
+        age_s=float(age_s),
+        n_fit=len(fit_nuclides),
+        chi2=chi2,
+        dof=dof,
+        chi2_per_dof=chi2 / dof,
+        p_value=p_value,
+        verdict=verdict,
+        ratio_testable=ratio_testable,
+        scale=scale,
+        chi2_scaled=chi2_scaled,
+        dof_scaled=dof_scaled,
+        chi2_per_dof_scaled=(chi2_scaled / dof_scaled) if dof_scaled else math.nan,
+        p_value_scaled=p_value_scaled,
+        verdict_scaled=verdict_scaled,
+        residuals=residuals,
+        excluded_unproducible=excluded,
+        warnings=warnings,
+    )
+
+
+def check_compatibility_from_entries(
+    canon_t0: CanonResult,
+    entries_today: list[ParsedEntry],
+    canon_today: CanonResult,
+    age_s: float,
+    default_rel_sigma: float = 0.05,
+    coverage_k: float = 1.0,
+) -> CompatResult:
+    """UI-facing convenience: derive today's sigmas from the parsed lines
+    (the assumed original is an exact hypothesis, so it carries no
+    uncertainty). ``coverage_k`` is the coverage factor of the pasted
+    uncertainties."""
+    _guard_canon(canon_t0, "original")
+    _guard_canon(canon_today, "present-day")
+    atoms_today = measured_atoms_from_canon(canon_today)
+    sig_today = sigma_atoms_from_entries(
+        entries_today, canon_today, atoms_today,
+        default_rel_sigma=default_rel_sigma, coverage_k=coverage_k,
+    )
+    return check_compatibility(
+        canon_t0,
+        canon_today,
+        age_s,
+        sigma_atoms_today=sig_today,
+        default_rel_sigma=default_rel_sigma,
     )

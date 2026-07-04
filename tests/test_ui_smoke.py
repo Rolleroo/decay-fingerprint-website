@@ -116,6 +116,31 @@ def test_age_tab_shows_implied_origin_date():
     assert any("Implied origin date" in i.value for i in at.info)
 
 
+def test_compatibility_button_disabled_until_closed_system_acknowledged():
+    at = make_app()
+    at.run()
+    assert at.button(key="cmp_run").disabled
+
+    at.checkbox(key="cmp_closed").check()
+    at.run()
+    assert not at.button(key="cmp_run").disabled
+
+
+def test_compatibility_tab_scores_and_shows_verdict():
+    at = make_app()
+    at.run()
+    at.text_area(key="cmp_t0_paste").set_value("Cs-137, 1.0e15\nSr-90, 4.0e14")
+    at.text_area(key="cmp_today_paste").set_value("Cs-137, 5.0e14, 3%\nSr-90, 2.1e14, 3%")
+    at.checkbox(key="cmp_closed").check()
+    at.run()
+    at.button(key="cmp_run").click()
+    at.run()
+    assert not at.exception
+    assert len(at.dataframe) >= 1  # per-nuclide detail table rendered
+    # a verdict box (compatible / in-tension / not-compatible) was shown
+    assert at.success or at.warning or at.error
+
+
 def test_reverse_tab_surfaces_parse_errors():
     at = make_app()
     at.run()
