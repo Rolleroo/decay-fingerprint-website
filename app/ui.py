@@ -1334,6 +1334,14 @@ def main() -> None:
             "[AMDC](https://www-nds.iaea.org/amdc/)."
         )
 
+    st.caption(
+        "🧪 This tool is in **beta**. Spotted a wrong number, a confusing label, or "
+        "something missing? "
+        "[Report it on GitHub](https://github.com/Rolleroo/decay-fingerprint-website/issues) "
+        "— include the tab, your input lines, and what you expected. The source code "
+        "is [public](https://github.com/Rolleroo/decay-fingerprint-website)."
+    )
+
 
 if __name__ == "__main__":
     main()
