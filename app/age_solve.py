@@ -107,8 +107,8 @@ def age_readable(age_s: float) -> str:
 def _guard_canon(canon: CanonResult, which: str) -> None:
     if canon.kind.startswith("fraction_"):
         raise ValidationError(
-            f"The {which} composition uses a relative (fraction/percent) unit; "
-            f"Mode A v1 accepts absolute units only (see docs/mode-a-addendum.md)."
+            f"The {which} composition uses a fraction/percent unit. Finding an age "
+            f"needs absolute amounts (activity, mass, or atoms) — please switch the unit."
         )
     if canon.kind in ("activity", "specific_activity"):
         stable = sorted(n for n in canon.contents if is_stable(n))
@@ -158,15 +158,15 @@ def solve_age(
     excluded = sorted(n for n in atoms_today if n not in closure)
     if excluded:
         warnings.append(
-            f"Excluded from the fit (cannot be produced from the known t=0 "
-            f"composition): {', '.join(excluded)}. If these are real, the t=0 "
-            f"composition is incomplete."
+            f"Ignored (these can't come from the original composition you gave, so "
+            f"they can't help date it): {', '.join(excluded)}. If they're really in "
+            f"the sample, the original composition you entered is incomplete."
         )
     fit_nuclides = sorted(n for n in atoms_today if n in closure)
     if not fit_nuclides:
         raise ValidationError(
-            "None of the measured nuclides can be produced from the known t=0 "
-            "composition; there is nothing to fit an age to."
+            "None of the measured nuclides could have come from the original "
+            "composition you gave, so there's nothing to work an age out from."
         )
 
     finite_hls = [
@@ -174,8 +174,8 @@ def solve_age(
     ]
     if not finite_hls:
         raise ValidationError(
-            "The known t=0 composition contains nothing radioactive; no decay "
-            "clock exists to solve an age from."
+            "The original composition contains nothing radioactive, so there's no "
+            "decay clock to date the sample by."
         )
     t_lo = WINDOW_LOW_S
     t_hi = max(WINDOW_HALF_LIVES * max(finite_hls), t_lo * 1e6)
@@ -299,8 +299,9 @@ def solve_age(
         chi2_grid = np.sum(((m[None, :] - F) / sigma_eff[None, :]) ** 2, axis=1)
         t_central, distinct = optimize(chi2_grid)
         warnings.append(
-            "t=0 uncertainties are folded into the per-nuclide sigma at the "
-            "central age (v1 approximation, see docs/mode-a-addendum.md)."
+            "You also gave uncertainties on the original composition. These are "
+            "included in the age uncertainty, but approximately — treat the interval "
+            "as a good guide rather than an exact figure."
         )
 
     # --- gate 3: ambiguity -- multiple refined optima in the acceptance band ---

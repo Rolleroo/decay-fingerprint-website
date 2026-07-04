@@ -93,7 +93,7 @@ def test_stable_nuclide_in_activity_unit_is_refused_with_a_message():
 def test_fraction_units_are_refused_in_v1():
     parse = parse_paste("Cs-137, 0.6\nCo-60, 0.4")
     canon_frac = canonicalize(parse.entries, "activity fraction")
-    with pytest.raises(ValidationError, match="relative"):
+    with pytest.raises(ValidationError, match="fraction/percent"):
         solve_age(canon_frac, canon_atoms({"Cs-137": 1.0e15}))
 
 
@@ -103,7 +103,7 @@ def test_unproducible_measured_nuclide_is_excluded_not_fitted():
     today = forward_atoms(t0, truth_age)
     result = exact_solve(t0, {"Sr-90": today["Sr-90"], "Cs-137": 1.0e10})
     assert result.excluded_unproducible == ["Cs-137"]
-    assert any("cannot be produced" in w for w in result.warnings)
+    assert any("can't come from the original composition" in w for w in result.warnings)
     # The intruder must not have corrupted the age.
     assert result.age_s == pytest.approx(truth_age, rel=1e-6)
 

@@ -403,9 +403,9 @@ def reconstruct_t0(
         # anchor's own t=0 amount: N_u = N_anc * lambda_anc / lambda_u.
         eq_ratio = nuclide_half_life_s(u) / nuclide_half_life_s(nearest)
         if nuclide_half_life_s(u) <= age_s / 2:
-            is_eq, note = True, f"assumed in equilibrium with {nearest} at t=0"
+            is_eq, note = True, f"not measured — assumed originally in balance with {nearest}"
         else:
-            is_eq, note = False, "assumed absent at t=0 (T1/2 comparable to the age)"
+            is_eq, note = False, "not measured — assumed originally absent (its half-life is close to the age)"
         assumed_members[u] = (eq_ratio, nearest, is_eq, note)
 
     # --- assemble the (square, triangular) system ---

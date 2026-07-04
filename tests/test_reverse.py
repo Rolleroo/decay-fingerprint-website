@@ -140,7 +140,7 @@ def test_midchain_gap_is_modelled_not_dropped_and_forward_check_closes():
 
     gap = row(result, "Tc-99m")
     assert gap.assumed
-    assert "equilibrium" in gap.assumption_note
+    assert "balance" in gap.assumption_note  # "assumed originally in balance with Mo-99"
 
     daughter = row(result, "Tc-99")
     assert daughter.assumption_dependent
