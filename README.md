@@ -225,3 +225,8 @@ Nuclear data:
   45 030002; Meng Wang et al. 2021, *AME2020 (II)*, Chinese Phys. C 45
   030003; F.G. Kondev et al. 2021, *NUBASE2020*, Chinese Phys. C 45 030001.
   Source: [AMDC](https://www-nds.iaea.org/amdc/).
+
+## License
+
+[MIT](LICENSE) — the same license as the `radioactivedecay` and `pysoplot`
+libraries this tool builds on.
